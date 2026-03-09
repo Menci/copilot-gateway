@@ -1,11 +1,24 @@
 {
   "tasks": {
-    "dev": "deno run --allow-net --allow-env --watch src/main.ts"
+    "dev": "deno run --allow-net --allow-env --unstable-kv --watch src/main.ts"
+  },
+  "unstable": ["kv"],
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "jsxImportSource": "hono/jsx"
   },
   "imports": {
+    "@anthropic-ai/tokenizer": "npm:@anthropic-ai/tokenizer@^0.0.4",
+    "gpt-tokenizer": "npm:gpt-tokenizer@^3.4.0",
     "hono": "jsr:@hono/hono@^4",
     "hono/logger": "jsr:@hono/hono@^4/logger",
     "hono/cors": "jsr:@hono/hono@^4/cors",
-    "hono/streaming": "jsr:@hono/hono@^4/streaming"
+    "hono/streaming": "jsr:@hono/hono@^4/streaming",
+    "hono/html": "jsr:@hono/hono@^4/html",
+    "hono/jsx": "jsr:@hono/hono@^4/jsx"
+  },
+  "deploy": {
+    "org": "menci",
+    "app": "copilot"
   }
 }
