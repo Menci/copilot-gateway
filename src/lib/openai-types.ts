@@ -16,6 +16,8 @@ export interface ChatCompletionsPayload {
     | "required"
     | { type: "function"; function: { name: string } }
     | null;
+  /** Thinking budget for reasoning models */
+  thinking_budget?: number;
 }
 
 export interface Tool {
@@ -33,6 +35,10 @@ export interface Message {
   name?: string;
   tool_calls?: ToolCall[];
   tool_call_id?: string;
+  /** Human-readable reasoning text (thinking content) */
+  reasoning_text?: string | null;
+  /** Opaque reasoning token/signature for round-tripping */
+  reasoning_opaque?: string | null;
 }
 
 export interface ToolCall {
@@ -84,23 +90,35 @@ interface Usage {
   };
 }
 
-interface ChoiceNonStreaming {
+export interface ChoiceNonStreaming {
   index: number;
-  message: { role: "assistant"; content: string | null; tool_calls?: ToolCall[] };
+  message: {
+    role: "assistant";
+    content: string | null;
+    tool_calls?: ToolCall[];
+    reasoning_text?: string | null;
+    reasoning_opaque?: string | null;
+  };
   finish_reason: "stop" | "length" | "tool_calls" | "content_filter";
 }
 
-interface ChoiceStreaming {
+export interface ChoiceStreaming {
   index: number;
-  delta: {
-    content?: string | null;
-    role?: string;
-    tool_calls?: {
-      index: number;
-      id?: string;
-      type?: "function";
-      function?: { name?: string; arguments?: string };
-    }[];
-  };
+  delta: Delta;
   finish_reason: "stop" | "length" | "tool_calls" | "content_filter" | null;
+}
+
+export interface Delta {
+  content?: string | null;
+  role?: string;
+  tool_calls?: {
+    index: number;
+    id?: string;
+    type?: "function";
+    function?: { name?: string; arguments?: string };
+  }[];
+  /** Human-readable reasoning text delta */
+  reasoning_text?: string | null;
+  /** Opaque reasoning token/signature delta */
+  reasoning_opaque?: string | null;
 }
