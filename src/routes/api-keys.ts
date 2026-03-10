@@ -3,15 +3,13 @@
 import type { Context } from "hono";
 import { createApiKey, listApiKeys, deleteApiKey, rotateApiKey, renameApiKey, type ApiKey } from "../lib/api-keys.ts";
 
-function keyToJson(k: ApiKey, redact = false) {
-  return { id: k.id, name: k.name, key: redact ? `…${k.key.slice(-4)}` : k.key, created_at: k.createdAt, last_used_at: k.lastUsedAt ?? null };
+function keyToJson(k: ApiKey) {
+  return { id: k.id, name: k.name, key: k.key, created_at: k.createdAt, last_used_at: k.lastUsedAt ?? null };
 }
 
-export const listKeys = (c: Context) => {
-  const isAdmin = c.get("isAdmin");
-
+export const listKeys = (_c: Context) => {
   return listApiKeys().then((keys) => {
-    return c.json(keys.map((k) => keyToJson(k, !isAdmin)));
+    return _c.json(keys.map((k) => keyToJson(k)));
   });
 };
 

@@ -11,7 +11,7 @@
 //   GET  /api/copilot-quota     — upstream Copilot quota (admin only)
 //   GET  /api/token-usage       — per-key token usage records
 //   GET  /api/models            — model list for dashboard
-//   CRUD /api/keys              — API key management (writes admin only)
+//   CRUD /api/keys              — API key management (admin only)
 //
 // Frontend:
 //   GET  /              — Login page (or JSON health check for API clients)
@@ -78,7 +78,6 @@ adminAuth.get("/me", authMe);
 app.route("/auth", adminAuth);
 
 // Control plane — any authenticated
-app.get("/api/keys", listKeys);
 app.get("/api/token-usage", tokenUsage);
 app.get("/api/models", models);
 
@@ -86,6 +85,7 @@ app.get("/api/models", models);
 const adminApi = new Hono();
 adminApi.use("*", adminOnlyMiddleware);
 adminApi.get("/copilot-quota", copilotQuota);
+adminApi.get("/keys", listKeys);
 adminApi.post("/keys", createKey);
 adminApi.post("/keys/:id/rotate", rotateKey);
 adminApi.patch("/keys/:id", renameKey);
