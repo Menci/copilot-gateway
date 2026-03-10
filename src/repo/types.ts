@@ -32,6 +32,7 @@ export interface ApiKeyRepo {
   getById(id: string): Promise<ApiKey | null>;
   save(key: ApiKey): Promise<void>;
   delete(id: string): Promise<boolean>;
+  deleteAll(): Promise<void>;
 }
 
 export interface GitHubRepo {
@@ -42,6 +43,7 @@ export interface GitHubRepo {
   getActiveId(): Promise<number | null>;
   setActiveId(userId: number): Promise<void>;
   clearActiveId(): Promise<void>;
+  deleteAllAccounts(): Promise<void>;
 }
 
 export interface UsageRepo {
@@ -54,6 +56,9 @@ export interface UsageRepo {
     outputTokens: number,
   ): Promise<void>;
   query(opts: { keyId?: string; start: string; end: string }): Promise<UsageRecord[]>;
+  listAll(): Promise<UsageRecord[]>;
+  set(record: UsageRecord): Promise<void>;
+  deleteAll(): Promise<void>;
 }
 
 export interface Repo {

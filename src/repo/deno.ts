@@ -41,6 +41,12 @@ class DenoKvApiKeyRepo implements ApiKeyRepo {
     await this.kv.delete(["api_keys", id]);
     return true;
   }
+
+  async deleteAll(): Promise<void> {
+    for await (const entry of this.kv.list({ prefix: ["api_keys"] })) {
+      await this.kv.delete(entry.key);
+    }
+  }
 }
 
 class DenoKvGitHubRepo implements GitHubRepo {
@@ -87,6 +93,13 @@ class DenoKvGitHubRepo implements GitHubRepo {
   }
 
   async clearActiveId(): Promise<void> {
+    await this.kv.delete(["config", "active_github_account"]);
+  }
+
+  async deleteAllAccounts(): Promise<void> {
+    for await (const entry of this.kv.list({ prefix: ["github_accounts"] })) {
+      await this.kv.delete(entry.key);
+    }
     await this.kv.delete(["config", "active_github_account"]);
   }
 }
@@ -150,6 +163,41 @@ class DenoKvUsageRepo implements UsageRepo {
     }
 
     return [...map.values()].sort((a, b) => a.hour.localeCompare(b.hour));
+  }
+
+  async listAll(): Promise<UsageRecord[]> {
+    const map = new Map<string, UsageRecord>();
+    for await (const entry of this.kv.list<Deno.KvU64>({ prefix: ["usage"] })) {
+      const keyId = entry.key[1] as string;
+      const model = entry.key[2] as string;
+      const hour = entry.key[3] as string;
+      const metric = entry.key[4] as string;
+
+      const mapKey = `${keyId}\0${model}\0${hour}`;
+      let rec = map.get(mapKey);
+      if (!rec) {
+        rec = { keyId, model, hour, requests: 0, inputTokens: 0, outputTokens: 0 };
+        map.set(mapKey, rec);
+      }
+
+      const val = Number(entry.value);
+      if (metric === "r") rec.requests = val;
+      else if (metric === "i") rec.inputTokens = val;
+      else if (metric === "o") rec.outputTokens = val;
+    }
+    return [...map.values()].sort((a, b) => a.hour.localeCompare(b.hour));
+  }
+
+  async set(record: UsageRecord): Promise<void> {
+    await this.kv.set(["usage", record.keyId, record.model, record.hour, "r"], new Deno.KvU64(BigInt(record.requests)));
+    await this.kv.set(["usage", record.keyId, record.model, record.hour, "i"], new Deno.KvU64(BigInt(record.inputTokens)));
+    await this.kv.set(["usage", record.keyId, record.model, record.hour, "o"], new Deno.KvU64(BigInt(record.outputTokens)));
+  }
+
+  async deleteAll(): Promise<void> {
+    for await (const entry of this.kv.list({ prefix: ["usage"] })) {
+      await this.kv.delete(entry.key);
+    }
   }
 }
 

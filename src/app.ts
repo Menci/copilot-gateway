@@ -23,6 +23,7 @@ import { LoginPage } from "./ui/login.tsx";
 import { DashboardPage } from "./ui/dashboard.tsx";
 import { listKeys, createKey, deleteKey, rotateKey, renameKey } from "./routes/api-keys.ts";
 import { tokenUsage } from "./routes/token-usage.ts";
+import { exportData, importData } from "./routes/data-transfer.ts";
 
 export const app = new Hono();
 
@@ -64,6 +65,8 @@ adminApi.post("/keys", createKey);
 adminApi.post("/keys/:id/rotate", rotateKey);
 adminApi.patch("/keys/:id", renameKey);
 adminApi.delete("/keys/:id", deleteKey);
+adminApi.get("/export", exportData);
+adminApi.post("/import", importData);
 app.route("/api", adminApi);
 
 app.post("/v1/chat/completions", chatCompletions);

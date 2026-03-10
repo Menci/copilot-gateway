@@ -1,4 +1,4 @@
-// Dashboard page — three-tab layout: Upstream / API Keys / Usage
+// Dashboard page — four-tab layout: Upstream / API Keys / Usage / Settings
 // All API calls authenticated via x-api-key header from localStorage
 
 import { html } from "hono/html";
@@ -65,6 +65,13 @@ export function DashboardPage() {
                 :class="tab === 'usage' ? 'bg-surface-600 text-white' : 'text-gray-500 hover:text-gray-300'">
                 Usage
               </button>
+              <template x-if="isAdmin">
+              <button @click="switchTab('settings')"
+                class="px-4 py-2 rounded-md text-sm font-medium transition-all"
+                :class="tab === 'settings' ? 'bg-surface-600 text-white' : 'text-gray-500 hover:text-gray-300'">
+                Settings
+              </button>
+              </template>
             </nav>
           </div>
         </header>
@@ -580,6 +587,112 @@ export function DashboardPage() {
             </div>
           </div>
 
+          <!-- ===================== TAB: SETTINGS (ADMIN_KEY only) ===================== -->
+          <template x-if="isAdmin">
+          <div x-show="tab === 'settings'" x-transition:enter="transition ease-out duration-200" x-transition:enter-start="opacity-0" x-transition:enter-end="opacity-100">
+
+            <!-- Export -->
+            <div class="glass-card p-6 mb-6 animate-in">
+              <h3 class="text-white font-semibold mb-1">Export Data</h3>
+              <p class="text-sm text-gray-400 mb-4">Download all API keys, GitHub accounts, and usage data as a JSON file.</p>
+              <button @click="exportData()" class="btn-primary" :disabled="exportLoading">
+                <span x-show="!exportLoading" class="flex items-center gap-2">
+                  <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                  Export JSON
+                </span>
+                <span x-show="exportLoading" class="flex items-center gap-2">
+                  <svg class="animate-spin h-4 w-4" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3" fill="none" opacity="0.25"/><path fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" opacity="0.75"/></svg>
+                  Exporting...
+                </span>
+              </button>
+            </div>
+
+            <!-- Import -->
+            <div class="glass-card p-6 animate-in">
+              <h3 class="text-white font-semibold mb-1">Import Data</h3>
+              <p class="text-sm text-gray-400 mb-4">Restore data from a previously exported JSON file.</p>
+
+              <!-- File picker -->
+              <div class="mb-4">
+                <label class="block w-full cursor-pointer border-2 border-dashed border-white/10 hover:border-accent-cyan/30 rounded-xl p-8 text-center transition-colors"
+                  :class="importFile ? 'border-accent-cyan/40 bg-accent-cyan/5' : ''">
+                  <input type="file" accept=".json" class="hidden" @change="handleImportFile($event)">
+                  <template x-if="!importFile">
+                    <div>
+                      <svg class="w-8 h-8 mx-auto mb-2 text-gray-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                      <p class="text-sm text-gray-400">Click to select a JSON export file</p>
+                    </div>
+                  </template>
+                  <template x-if="importFile">
+                    <div>
+                      <svg class="w-8 h-8 mx-auto mb-2 text-accent-cyan" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                      <p class="text-sm text-white" x-text="importFile.name"></p>
+                      <p class="text-xs text-gray-500 mt-1" x-text="'Exported: ' + (importPreview.exportedAt ? new Date(importPreview.exportedAt).toLocaleString() : 'unknown')"></p>
+                    </div>
+                  </template>
+                </label>
+              </div>
+
+              <!-- Preview & mode -->
+              <template x-if="importPreview.ready">
+                <div>
+                  <div class="grid grid-cols-3 gap-3 mb-4">
+                    <div class="bg-surface-800 rounded-lg p-3 text-center">
+                      <p class="text-xs text-gray-500 mb-1">API Keys</p>
+                      <p class="text-lg font-bold font-mono text-white" x-text="importPreview.apiKeys"></p>
+                    </div>
+                    <div class="bg-surface-800 rounded-lg p-3 text-center">
+                      <p class="text-xs text-gray-500 mb-1">GitHub Accounts</p>
+                      <p class="text-lg font-bold font-mono text-white" x-text="importPreview.githubAccounts"></p>
+                    </div>
+                    <div class="bg-surface-800 rounded-lg p-3 text-center">
+                      <p class="text-xs text-gray-500 mb-1">Usage Records</p>
+                      <p class="text-lg font-bold font-mono text-white" x-text="importPreview.usage"></p>
+                    </div>
+                  </div>
+
+                  <!-- Mode selector -->
+                  <div class="flex gap-3 mb-4">
+                    <button @click="importMode = 'merge'"
+                      class="flex-1 p-3 rounded-lg border text-left transition-all"
+                      :class="importMode === 'merge' ? 'border-accent-cyan/50 bg-accent-cyan/5' : 'border-white/10 hover:border-white/20'">
+                      <p class="text-sm font-medium" :class="importMode === 'merge' ? 'text-accent-cyan' : 'text-white'">Merge</p>
+                      <p class="text-xs text-gray-500 mt-0.5">Keep existing data, add/update imported records</p>
+                    </button>
+                    <button @click="importMode = 'replace'"
+                      class="flex-1 p-3 rounded-lg border text-left transition-all"
+                      :class="importMode === 'replace' ? 'border-red-400/50 bg-red-400/5' : 'border-white/10 hover:border-white/20'">
+                      <p class="text-sm font-medium" :class="importMode === 'replace' ? 'text-red-400' : 'text-white'">Replace</p>
+                      <p class="text-xs text-gray-500 mt-0.5">Wipe all existing data and restore from file</p>
+                    </button>
+                  </div>
+
+                  <!-- Warning for replace mode -->
+                  <template x-if="importMode === 'replace'">
+                    <div class="bg-red-500/10 border border-red-500/20 rounded-lg p-3 mb-4">
+                      <p class="text-sm text-red-400">This will permanently delete all existing data before importing. This cannot be undone.</p>
+                    </div>
+                  </template>
+
+                  <!-- Import button -->
+                  <button @click="doImport()" class="btn-primary" :disabled="importLoading"
+                    :class="importMode === 'replace' ? 'bg-red-500/80 hover:bg-red-500' : ''">
+                    <span x-show="!importLoading" class="flex items-center gap-2">
+                      <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                      <span x-text="importMode === 'replace' ? 'Replace All Data' : 'Merge Data'"></span>
+                    </span>
+                    <span x-show="importLoading" class="flex items-center gap-2">
+                      <svg class="animate-spin h-4 w-4" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3" fill="none" opacity="0.25"/><path fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" opacity="0.75"/></svg>
+                      Importing...
+                    </span>
+                  </button>
+                </div>
+              </template>
+            </div>
+
+          </div>
+          </template>
+
         </main>
       </div>
 
@@ -590,7 +703,7 @@ export function DashboardPage() {
       <script>
         function dashboardApp() {
           const isAdmin = localStorage.getItem('isAdmin') === '1';
-          const TABS = isAdmin ? ['upstream', 'keys', 'usage'] : ['usage'];
+          const TABS = isAdmin ? ['upstream', 'keys', 'usage', 'settings'] : ['usage'];
           const defaultTab = isAdmin ? 'upstream' : 'usage';
           const initTab = TABS.includes(location.hash.slice(1)) ? location.hash.slice(1) : defaultTab;
 
@@ -657,6 +770,14 @@ export function DashboardPage() {
             tokenChart: null,
             tokenLoading: false,
             tokenSummary: { requests: 0, input: 0, output: 0 },
+
+            // Settings — import/export
+            exportLoading: false,
+            importFile: null,
+            importData: null,
+            importMode: 'merge',
+            importLoading: false,
+            importPreview: { ready: false, exportedAt: null, apiKeys: 0, githubAccounts: 0, usage: 0 },
 
             get baseUrl() { return location.origin; },
 
@@ -1147,6 +1268,77 @@ export function DashboardPage() {
             },
 
             switchTokenRange(range) { this.tokenRange = range; this.loadTokenUsage(); },
+
+            // ---- Settings: import/export ----
+
+            async exportData() {
+              this.exportLoading = true;
+              try {
+                const resp = await fetch('/api/export', { headers: this.authHeaders() });
+                if (resp.status === 401) { this.kickToLogin(); return; }
+                if (!resp.ok) { alert('Export failed: ' + (await resp.json()).error); return; }
+                const data = await resp.json();
+                const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'copilot-export-' + new Date().toISOString().slice(0,10) + '.json';
+                a.click();
+                URL.revokeObjectURL(url);
+              } catch (e) { console.error('exportData:', e); alert('Export failed'); }
+              finally { this.exportLoading = false; }
+            },
+
+            handleImportFile(event) {
+              const file = event.target.files[0];
+              if (!file) return;
+              this.importFile = file;
+              this.importPreview = { ready: false, exportedAt: null, apiKeys: 0, githubAccounts: 0, usage: 0 };
+              this.importData = null;
+
+              const reader = new FileReader();
+              reader.onload = (e) => {
+                try {
+                  const json = JSON.parse(e.target.result);
+                  if (!json.data) { alert('Invalid export file: missing data field'); this.importFile = null; return; }
+                  this.importData = json.data;
+                  this.importPreview = {
+                    ready: true,
+                    exportedAt: json.exportedAt || null,
+                    apiKeys: Array.isArray(json.data.apiKeys) ? json.data.apiKeys.length : 0,
+                    githubAccounts: Array.isArray(json.data.githubAccounts) ? json.data.githubAccounts.length : 0,
+                    usage: Array.isArray(json.data.usage) ? json.data.usage.length : 0,
+                  };
+                } catch { alert('Invalid JSON file'); this.importFile = null; }
+              };
+              reader.readAsText(file);
+            },
+
+            async doImport() {
+              if (!this.importData) return;
+              if (this.importMode === 'replace') {
+                if (!confirm('This will DELETE ALL existing data and replace it with the imported file. Are you sure?')) return;
+              }
+              this.importLoading = true;
+              try {
+                const resp = await fetch('/api/import', {
+                  method: 'POST',
+                  headers: { ...this.authHeaders(), 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ mode: this.importMode, data: this.importData }),
+                });
+                if (resp.status === 401) { this.kickToLogin(); return; }
+                const result = await resp.json();
+                if (resp.ok) {
+                  alert('Import complete: ' + result.imported.apiKeys + ' keys, ' + result.imported.githubAccounts + ' accounts, ' + result.imported.usage + ' usage records');
+                  this.importFile = null;
+                  this.importData = null;
+                  this.importPreview = { ready: false, exportedAt: null, apiKeys: 0, githubAccounts: 0, usage: 0 };
+                } else {
+                  alert('Import failed: ' + (result.error || 'Unknown error'));
+                }
+              } catch (e) { console.error('doImport:', e); alert('Import failed'); }
+              finally { this.importLoading = false; }
+            },
 
             // ---- Common ----
             logout() { localStorage.removeItem('authKey'); localStorage.removeItem('isAdmin'); localStorage.removeItem('login_key_id'); localStorage.removeItem('login_key_name'); localStorage.removeItem('login_key_hint'); window.location.href = '/'; },

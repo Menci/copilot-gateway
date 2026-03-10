@@ -66,6 +66,10 @@ class D1ApiKeyRepo implements ApiKeyRepo {
     const result = await this.db.prepare("DELETE FROM api_keys WHERE id = ?").bind(id).run();
     return (result.meta.changes as number ?? 0) > 0;
   }
+
+  async deleteAll(): Promise<void> {
+    await this.db.prepare("DELETE FROM api_keys").run();
+  }
 }
 
 function toApiKey(row: { id: string; name: string; key: string; created_at: string; last_used_at: string | null }): ApiKey {
@@ -130,6 +134,11 @@ class D1GitHubRepo implements GitHubRepo {
   async clearActiveId(): Promise<void> {
     await this.db.prepare("DELETE FROM config WHERE key = 'active_github_account'").run();
   }
+
+  async deleteAllAccounts(): Promise<void> {
+    await this.db.prepare("DELETE FROM github_accounts").run();
+    await this.db.prepare("DELETE FROM config WHERE key = 'active_github_account'").run();
+  }
 }
 
 function toGitHubAccount(row: { user_id: number; token: string; account_type: string; login: string; name: string | null; avatar_url: string }): GitHubAccount {
@@ -185,6 +194,37 @@ class D1UsageRepo implements UsageRepo {
       inputTokens: r.input_tokens,
       outputTokens: r.output_tokens,
     }));
+  }
+
+  async listAll(): Promise<UsageRecord[]> {
+    const { results } = await this.db
+      .prepare("SELECT key_id, model, hour, requests, input_tokens, output_tokens FROM usage ORDER BY hour")
+      .all<{ key_id: string; model: string; hour: string; requests: number; input_tokens: number; output_tokens: number }>();
+    return results.map((r) => ({
+      keyId: r.key_id,
+      model: r.model,
+      hour: r.hour,
+      requests: r.requests,
+      inputTokens: r.input_tokens,
+      outputTokens: r.output_tokens,
+    }));
+  }
+
+  async set(record: UsageRecord): Promise<void> {
+    await this.db
+      .prepare(
+        `INSERT INTO usage (key_id, model, hour, requests, input_tokens, output_tokens) VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT (key_id, model, hour) DO UPDATE SET
+           requests = excluded.requests,
+           input_tokens = excluded.input_tokens,
+           output_tokens = excluded.output_tokens`,
+      )
+      .bind(record.keyId, record.model, record.hour, record.requests, record.inputTokens, record.outputTokens)
+      .run();
+  }
+
+  async deleteAll(): Promise<void> {
+    await this.db.prepare("DELETE FROM usage").run();
   }
 }
 
