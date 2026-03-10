@@ -1,16 +1,22 @@
 // API key management routes
 
 import type { Context } from "hono";
-import { createApiKey, listApiKeys, deleteApiKey, rotateApiKey, renameApiKey, type ApiKey } from "../lib/api-keys.ts";
+import { createApiKey, listApiKeys, getApiKeyById, deleteApiKey, rotateApiKey, renameApiKey, type ApiKey } from "../lib/api-keys.ts";
 
 function keyToJson(k: ApiKey) {
   return { id: k.id, name: k.name, key: k.key, created_at: k.createdAt, last_used_at: k.lastUsedAt ?? null };
 }
 
-export const listKeys = (_c: Context) => {
-  return listApiKeys().then((keys) => {
-    return _c.json(keys.map((k) => keyToJson(k)));
-  });
+export const listKeys = async (c: Context) => {
+  const isAdmin = c.get("isAdmin");
+  if (isAdmin) {
+    const keys = await listApiKeys();
+    return c.json(keys.map((k) => keyToJson(k)));
+  }
+  // Non-admin: return only the caller's own key
+  const keyId = c.get("apiKeyId") as string;
+  const key = await getApiKeyById(keyId);
+  return c.json(key ? [keyToJson(key)] : []);
 };
 
 export const createKey = async (c: Context) => {

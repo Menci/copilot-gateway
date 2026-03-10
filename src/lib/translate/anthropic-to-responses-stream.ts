@@ -1,4 +1,12 @@
-import type { AnthropicStreamEventData, AnthropicResponse } from "../anthropic-types.ts";
+import type {
+  AnthropicStreamEventData,
+  AnthropicMessageStartEvent,
+  AnthropicContentBlockStartEvent,
+  AnthropicContentBlockDeltaEvent,
+  AnthropicContentBlockStopEvent,
+  AnthropicMessageDeltaEvent,
+  AnthropicErrorEvent,
+} from "../anthropic-types.ts";
 import { THINKING_PLACEHOLDER } from "../anthropic-types.ts";
 import type {
   ResponseStreamEvent,
@@ -8,6 +16,7 @@ import type {
   ResponseOutputMessage,
   ResponseOutputReasoning,
 } from "../responses-types.ts";
+import { decodeSignature } from "./utils.ts";
 
 type OutputBlockInfo =
   | { type: "thinking"; outputIndex: number; thinkingText: string; signature: string }
@@ -66,9 +75,8 @@ export function translateAnthropicEventToResponsesEvents(
   }
 }
 
-// deno-lint-ignore no-explicit-any
-function handleMessageStart(event: any, state: AnthropicToResponsesStreamState): ResponseStreamEvent[] {
-  const message = event.message as AnthropicResponse;
+function handleMessageStart(event: AnthropicMessageStartEvent, state: AnthropicToResponsesStreamState): ResponseStreamEvent[] {
+  const message = event.message;
   state.inputTokens = message.usage?.input_tokens ?? 0;
   state.cacheReadInputTokens = message.usage?.cache_read_input_tokens;
 
@@ -81,9 +89,8 @@ function handleMessageStart(event: any, state: AnthropicToResponsesStreamState):
   }];
 }
 
-// deno-lint-ignore no-explicit-any
-function handleContentBlockStart(event: any, state: AnthropicToResponsesStreamState): ResponseStreamEvent[] {
-  const index: number = event.index;
+function handleContentBlockStart(event: AnthropicContentBlockStartEvent, state: AnthropicToResponsesStreamState): ResponseStreamEvent[] {
+  const index = event.index;
   const contentBlock = event.content_block;
   const outputIdx = state.outputIndex++;
 
@@ -117,9 +124,8 @@ function handleContentBlockStart(event: any, state: AnthropicToResponsesStreamSt
   return [];
 }
 
-// deno-lint-ignore no-explicit-any
-function handleContentBlockDelta(event: any, state: AnthropicToResponsesStreamState): ResponseStreamEvent[] {
-  const info = state.blockMap.get(event.index as number);
+function handleContentBlockDelta(event: AnthropicContentBlockDeltaEvent, state: AnthropicToResponsesStreamState): ResponseStreamEvent[] {
+  const info = state.blockMap.get(event.index);
   if (!info) return [];
   const delta = event.delta;
 
@@ -160,25 +166,22 @@ function handleContentBlockDelta(event: any, state: AnthropicToResponsesStreamSt
   return [];
 }
 
-// deno-lint-ignore no-explicit-any
-function handleContentBlockStop(event: any, state: AnthropicToResponsesStreamState): ResponseStreamEvent[] {
-  const info = state.blockMap.get(event.index as number);
+function handleContentBlockStop(event: AnthropicContentBlockStopEvent, state: AnthropicToResponsesStreamState): ResponseStreamEvent[] {
+  const info = state.blockMap.get(event.index);
   if (!info) return [];
-  state.blockMap.delete(event.index as number);
+  state.blockMap.delete(event.index);
 
   const events: ResponseStreamEvent[] = [];
 
   if (info.type === "thinking") {
-    // Parse signature: native Claude has no "@", Responses-origin has "encrypted@id"
-    const encryptedContent = info.signature.includes("@") ? info.signature.split("@")[0] : info.signature;
-    const reasoningId = info.signature.includes("@") ? info.signature.split("@")[1] : `rs_${info.outputIndex}`;
+    const { encryptedContent, reasoningId } = decodeSignature(info.signature);
     const summaryText = info.thinkingText === THINKING_PLACEHOLDER ? "" : info.thinkingText;
 
     if (summaryText) {
       events.push({ type: "response.reasoning_summary_text.done", output_index: info.outputIndex, summary_index: 0, text: summaryText });
     }
     const item: ResponseOutputReasoning = {
-      type: "reasoning", id: reasoningId,
+      type: "reasoning", id: reasoningId ?? `rs_${info.outputIndex}`,
       summary: summaryText ? [{ type: "summary_text", text: summaryText }] : [],
       encrypted_content: encryptedContent || undefined,
     };
@@ -199,9 +202,7 @@ function handleContentBlockStop(event: any, state: AnthropicToResponsesStreamSta
   return events;
 }
 
-// deno-lint-ignore no-explicit-any
-function handleMessageDelta(event: any, state: AnthropicToResponsesStreamState): ResponseStreamEvent[] {
-  // Save usage from message_delta for the final response.completed event
+function handleMessageDelta(event: AnthropicMessageDeltaEvent, state: AnthropicToResponsesStreamState): ResponseStreamEvent[] {
   if (event.usage?.output_tokens != null) {
     state.outputTokens = event.usage.output_tokens;
   }
@@ -214,8 +215,7 @@ function handleMessageStop(state: AnthropicToResponsesStreamState): ResponseStre
   return [{ type: "response.completed", response: buildResult(state, "completed") }];
 }
 
-// deno-lint-ignore no-explicit-any
-function handleError(event: any, state: AnthropicToResponsesStreamState): ResponseStreamEvent[] {
+function handleError(event: AnthropicErrorEvent, state: AnthropicToResponsesStreamState): ResponseStreamEvent[] {
   state.completed = true;
   return [{ type: "error", message: event.error?.message ?? "An unexpected error occurred.", code: event.error?.type }];
 }

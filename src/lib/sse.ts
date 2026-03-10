@@ -28,3 +28,41 @@ export async function* parseSSEStream(
     reader.releaseLock();
   }
 }
+
+import type { Context } from "hono";
+import { streamSSE } from "hono/streaming";
+
+interface SSEEvent {
+  event?: string;
+  data: string;
+}
+
+/**
+ * Stream SSE events from an upstream response body, applying an optional transform.
+ * If no transform is provided, events are forwarded as-is.
+ */
+export function proxySSE(
+  c: Context,
+  body: ReadableStream<Uint8Array>,
+  transform?: (event: string, data: string) => SSEEvent[] | null,
+  label = "SSE proxy",
+): Response {
+  return streamSSE(c, async (stream) => {
+    try {
+      for await (const { event, data } of parseSSEStream(body)) {
+        if (transform) {
+          const results = transform(event, data);
+          if (results) {
+            for (const e of results) {
+              await stream.writeSSE({ event: e.event, data: e.data });
+            }
+          }
+        } else {
+          await stream.writeSSE({ event: event || undefined, data });
+        }
+      }
+    } catch (e) {
+      console.error(`${label} stream error:`, e);
+    }
+  });
+}

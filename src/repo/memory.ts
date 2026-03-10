@@ -13,31 +13,33 @@ import type {
 class MemoryApiKeyRepo implements ApiKeyRepo {
   private store = new Map<string, ApiKey>();
 
-  async list(): Promise<ApiKey[]> {
-    return [...this.store.values()];
+  list(): Promise<ApiKey[]> {
+    return Promise.resolve([...this.store.values()]);
   }
 
-  async findByRawKey(rawKey: string): Promise<ApiKey | null> {
+  findByRawKey(rawKey: string): Promise<ApiKey | null> {
     for (const key of this.store.values()) {
-      if (key.key === rawKey) return key;
+      if (key.key === rawKey) return Promise.resolve(key);
     }
-    return null;
+    return Promise.resolve(null);
   }
 
-  async getById(id: string): Promise<ApiKey | null> {
-    return this.store.get(id) ?? null;
+  getById(id: string): Promise<ApiKey | null> {
+    return Promise.resolve(this.store.get(id) ?? null);
   }
 
-  async save(key: ApiKey): Promise<void> {
+  save(key: ApiKey): Promise<void> {
     this.store.set(key.id, { ...key });
+    return Promise.resolve();
   }
 
-  async delete(id: string): Promise<boolean> {
-    return this.store.delete(id);
+  delete(id: string): Promise<boolean> {
+    return Promise.resolve(this.store.delete(id));
   }
 
-  async deleteAll(): Promise<void> {
+  deleteAll(): Promise<void> {
     this.store.clear();
+    return Promise.resolve();
   }
 }
 
@@ -45,38 +47,43 @@ class MemoryGitHubRepo implements GitHubRepo {
   private accounts = new Map<number, GitHubAccount>();
   private activeId: number | null = null;
 
-  async listAccounts(): Promise<GitHubAccount[]> {
-    return [...this.accounts.values()];
+  listAccounts(): Promise<GitHubAccount[]> {
+    return Promise.resolve([...this.accounts.values()]);
   }
 
-  async getAccount(userId: number): Promise<GitHubAccount | null> {
-    return this.accounts.get(userId) ?? null;
+  getAccount(userId: number): Promise<GitHubAccount | null> {
+    return Promise.resolve(this.accounts.get(userId) ?? null);
   }
 
-  async saveAccount(userId: number, account: GitHubAccount): Promise<void> {
+  saveAccount(userId: number, account: GitHubAccount): Promise<void> {
     this.accounts.set(userId, { ...account, user: { ...account.user } });
+    return Promise.resolve();
   }
 
-  async deleteAccount(userId: number): Promise<void> {
+  deleteAccount(userId: number): Promise<void> {
     this.accounts.delete(userId);
     if (this.activeId === userId) this.activeId = null;
+    return Promise.resolve();
   }
 
-  async getActiveId(): Promise<number | null> {
-    return this.activeId;
+  getActiveId(): Promise<number | null> {
+    return Promise.resolve(this.activeId);
   }
 
-  async setActiveId(userId: number): Promise<void> {
+  setActiveId(userId: number): Promise<void> {
     this.activeId = userId;
+    return Promise.resolve();
   }
 
-  async clearActiveId(): Promise<void> {
+  clearActiveId(): Promise<void> {
     this.activeId = null;
+    return Promise.resolve();
   }
 
-  async deleteAllAccounts(): Promise<void> {
+  deleteAllAccounts(): Promise<void> {
     this.accounts.clear();
     this.activeId = null;
+    return Promise.resolve();
   }
 }
 
@@ -87,7 +94,7 @@ class MemoryUsageRepo implements UsageRepo {
     return `${r.keyId}\0${r.model}\0${r.hour}`;
   }
 
-  async record(
+  record(
     keyId: string,
     model: string,
     hour: string,
@@ -104,27 +111,32 @@ class MemoryUsageRepo implements UsageRepo {
     } else {
       this.store.set(k, { keyId, model, hour, requests, inputTokens, outputTokens });
     }
+    return Promise.resolve();
   }
 
-  async query(opts: { keyId?: string; start: string; end: string }): Promise<UsageRecord[]> {
-    return [...this.store.values()]
-      .filter((r) => {
-        if (opts.keyId && r.keyId !== opts.keyId) return false;
-        return r.hour >= opts.start && r.hour < opts.end;
-      })
-      .sort((a, b) => a.hour.localeCompare(b.hour));
+  query(opts: { keyId?: string; start: string; end: string }): Promise<UsageRecord[]> {
+    return Promise.resolve(
+      [...this.store.values()]
+        .filter((r) => {
+          if (opts.keyId && r.keyId !== opts.keyId) return false;
+          return r.hour >= opts.start && r.hour < opts.end;
+        })
+        .sort((a, b) => a.hour.localeCompare(b.hour)),
+    );
   }
 
-  async listAll(): Promise<UsageRecord[]> {
-    return [...this.store.values()].sort((a, b) => a.hour.localeCompare(b.hour));
+  listAll(): Promise<UsageRecord[]> {
+    return Promise.resolve([...this.store.values()].sort((a, b) => a.hour.localeCompare(b.hour)));
   }
 
-  async set(record: UsageRecord): Promise<void> {
+  set(record: UsageRecord): Promise<void> {
     this.store.set(this.key(record), { ...record });
+    return Promise.resolve();
   }
 
-  async deleteAll(): Promise<void> {
+  deleteAll(): Promise<void> {
     this.store.clear();
+    return Promise.resolve();
   }
 }
 

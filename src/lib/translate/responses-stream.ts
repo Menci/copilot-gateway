@@ -2,8 +2,7 @@ import type { AnthropicStreamEventData } from "../anthropic-types.ts";
 import { THINKING_PLACEHOLDER } from "../anthropic-types.ts";
 import type { ResponseOutputReasoning, ResponsesResult, ResponseStreamEvent } from "../responses-types.ts";
 import { translateResponsesToAnthropic } from "./responses.ts";
-
-const MAX_CONSECUTIVE_WHITESPACE = 20;
+import { checkWhitespaceOverflow, encodeSignature } from "./utils.ts";
 
 export interface ResponsesStreamState {
   messageStartSent: boolean;
@@ -142,7 +141,7 @@ function handleOutputItemDone(
 
   const events: AnthropicStreamEventData[] = [];
   const blockIndex = openThinkingBlock(state, event.output_index, events);
-  const signature = (event.item.encrypted_content ?? "") + "@" + event.item.id;
+  const signature = encodeSignature(event.item.encrypted_content ?? "", event.item.id);
 
   if (!event.item.summary || event.item.summary.length === 0) {
     events.push({
@@ -235,26 +234,19 @@ function handleFunctionArgsDelta(
 
   const events: AnthropicStreamEventData[] = [];
 
-  // Infinite whitespace protection
-  let wsCount = fcState.consecutiveWhitespace;
-  for (const ch of event.delta) {
-    if (ch === "\r" || ch === "\n" || ch === "\t") {
-      wsCount++;
-      if (wsCount > MAX_CONSECUTIVE_WHITESPACE) {
-        console.warn("Infinite whitespace in Responses function call args, aborting");
-        closeAllBlocks(state, events);
-        state.messageCompleted = true;
-        events.push({
-          type: "error",
-          error: { type: "api_error", message: "Tool call arguments contained excessive whitespace." },
-        });
-        return events;
-      }
-    } else if (ch !== " ") {
-      wsCount = 0;
-    }
+  const ws = checkWhitespaceOverflow(event.delta, fcState.consecutiveWhitespace);
+  fcState.consecutiveWhitespace = ws.count;
+
+  if (ws.exceeded) {
+    console.warn("Infinite whitespace in Responses function call args, aborting");
+    closeAllBlocks(state, events);
+    state.messageCompleted = true;
+    events.push({
+      type: "error",
+      error: { type: "api_error", message: "Tool call arguments contained excessive whitespace." },
+    });
+    return events;
   }
-  fcState.consecutiveWhitespace = wsCount;
 
   events.push({
     type: "content_block_delta",
@@ -334,13 +326,16 @@ function handleError(
 
 // ── Block management ──
 
-function openTextBlock(
+type ContentBlockInit =
+  | { type: "text"; text: "" }
+  | { type: "thinking"; thinking: "" };
+
+function openBlock(
   state: ResponsesStreamState,
-  outputIndex: number,
-  contentIndex: number,
+  key: string,
+  contentBlock: ContentBlockInit,
   events: AnthropicStreamEventData[],
 ): number {
-  const key = `${outputIndex}:${contentIndex}`;
   let idx = state.blockIndexByKey.get(key);
   if (idx === undefined) {
     idx = state.nextBlockIndex++;
@@ -348,10 +343,19 @@ function openTextBlock(
   }
   if (!state.openBlocks.has(idx)) {
     closeOpenBlocks(state, events);
-    events.push({ type: "content_block_start", index: idx, content_block: { type: "text", text: "" } });
+    events.push({ type: "content_block_start", index: idx, content_block: contentBlock });
     state.openBlocks.add(idx);
   }
   return idx;
+}
+
+function openTextBlock(
+  state: ResponsesStreamState,
+  outputIndex: number,
+  contentIndex: number,
+  events: AnthropicStreamEventData[],
+): number {
+  return openBlock(state, `${outputIndex}:${contentIndex}`, { type: "text", text: "" }, events);
 }
 
 function openThinkingBlock(
@@ -359,18 +363,7 @@ function openThinkingBlock(
   outputIndex: number,
   events: AnthropicStreamEventData[],
 ): number {
-  const key = `${outputIndex}:0`;
-  let idx = state.blockIndexByKey.get(key);
-  if (idx === undefined) {
-    idx = state.nextBlockIndex++;
-    state.blockIndexByKey.set(key, idx);
-  }
-  if (!state.openBlocks.has(idx)) {
-    closeOpenBlocks(state, events);
-    events.push({ type: "content_block_start", index: idx, content_block: { type: "thinking", thinking: "" } });
-    state.openBlocks.add(idx);
-  }
-  return idx;
+  return openBlock(state, `${outputIndex}:0`, { type: "thinking", thinking: "" }, events);
 }
 
 function closeOpenBlocks(state: ResponsesStreamState, events: AnthropicStreamEventData[]): void {

@@ -1,5 +1,4 @@
 import type { Context } from "hono";
-import { streamSSE } from "hono/streaming";
 import { copilotFetch, type CopilotFetchOptions } from "../lib/copilot.ts";
 import { getGithubCredentials } from "../lib/github.ts";
 import { modelSupportsEndpoint } from "../lib/models-cache.ts";
@@ -13,21 +12,22 @@ import {
   createAnthropicToResponsesStreamState,
   translateAnthropicEventToResponsesEvents,
 } from "../lib/translate/anthropic-to-responses-stream.ts";
-import { parseSSEStream } from "../lib/sse.ts";
+import { proxySSE } from "../lib/sse.ts";
 
-function hasVision(payload: Record<string, unknown>): boolean {
+function hasVision(payload: ResponsesPayload): boolean {
   const input = payload.input;
   if (!Array.isArray(input)) return false;
-  return input.some((item: Record<string, unknown>) =>
-    item.type === "message" && Array.isArray(item.content) &&
-    item.content.some((block: Record<string, unknown>) => block.type === "input_image" || block.type === "image")
+  return input.some((item) =>
+    item.type === "message" && "content" in item && Array.isArray(item.content) &&
+    // deno-lint-ignore no-explicit-any
+    item.content.some((block: any) => block.type === "input_image" || block.type === "image")
   );
 }
 
-function getInitiator(payload: Record<string, unknown>): "user" | "agent" {
+function getInitiator(payload: ResponsesPayload): "user" | "agent" {
   const input = payload.input;
   if (!Array.isArray(input)) return "user";
-  const lastItem = input[input.length - 1] as Record<string, unknown> | undefined;
+  const lastItem = input[input.length - 1];
   return lastItem?.type === "function_call_output" ? "agent" : "user";
 }
 
@@ -36,11 +36,12 @@ function getInitiator(payload: Record<string, unknown>): "user" | "agent" {
  * Codex CLI sends apply_patch as { type: "custom", name: "apply_patch" },
  * but Copilot only understands "function" tools.
  */
-function fixApplyPatchTools(payload: Record<string, unknown>): void {
+function fixApplyPatchTools(payload: ResponsesPayload): void {
   const tools = payload.tools;
   if (!Array.isArray(tools)) return;
   for (let i = 0; i < tools.length; i++) {
-    const t = tools[i] as Record<string, unknown>;
+    // deno-lint-ignore no-explicit-any
+    const t = tools[i] as any;
     if (t.type === "custom" && t.name === "apply_patch") {
       tools[i] = {
         type: "function",
@@ -92,9 +93,9 @@ function fixStreamIds(data: string, event: string | undefined, tracker: StreamId
 
 export const responses = async (c: Context) => {
   try {
-    const payload = await c.req.json<Record<string, unknown>>();
+    const payload = await c.req.json<ResponsesPayload>();
     const { token: githubToken, accountType } = await getGithubCredentials();
-    const model = payload.model as string;
+    const model = payload.model;
 
     const supportsResponses = await modelSupportsEndpoint(model, "/responses", githubToken, accountType);
     if (supportsResponses) {
@@ -116,7 +117,7 @@ export const responses = async (c: Context) => {
 
 async function handleDirectResponses(
   c: Context,
-  payload: Record<string, unknown>,
+  payload: ResponsesPayload,
   githubToken: string,
   accountType: string,
 ): Promise<Response> {
@@ -146,28 +147,22 @@ async function handleDirectResponses(
     return c.json({ error: { message: "No response body from upstream", type: "api_error" } }, 502);
   }
 
-  return streamSSE(c, async (stream) => {
-    const idTracker: StreamIdTracker = { outputItemIds: new Map() };
-    try {
-      for await (const { event, data } of parseSSEStream(resp.body!)) {
-        const fixedData = fixStreamIds(data, event || undefined, idTracker);
-        await stream.writeSSE({ event: event || undefined, data: fixedData });
-      }
-    } catch (e) {
-      console.error("Responses stream error:", e);
-    }
-  });
+  const idTracker: StreamIdTracker = { outputItemIds: new Map() };
+  return proxySSE(c, resp.body, (event, data) => {
+    const fixedData = fixStreamIds(data, event || undefined, idTracker);
+    return [{ event: event || undefined, data: fixedData }];
+  }, "Responses");
 }
 
 async function handleViaMessages(
   c: Context,
-  payload: Record<string, unknown>,
+  payload: ResponsesPayload,
   githubToken: string,
   accountType: string,
 ): Promise<Response> {
   fixApplyPatchTools(payload);
 
-  const anthropicPayload = translateResponsesToAnthropicPayload(payload as unknown as ResponsesPayload);
+  const anthropicPayload = translateResponsesToAnthropicPayload(payload);
   const fetchOptions: CopilotFetchOptions = {
     vision: hasVision(payload),
     initiator: getInitiator(payload),
@@ -195,28 +190,20 @@ async function handleViaMessages(
     return c.json({ error: { message: "No response body from upstream", type: "api_error" } }, 502);
   }
 
-  return streamSSE(c, async (stream) => {
-    const responseId = `resp_${crypto.randomUUID().replace(/-/g, "").slice(0, 24)}`;
-    const state = createAnthropicToResponsesStreamState(responseId, anthropicPayload.model);
+  const responseId = `resp_${crypto.randomUUID().replace(/-/g, "").slice(0, 24)}`;
+  const state = createAnthropicToResponsesStreamState(responseId, anthropicPayload.model);
 
-    try {
-      for await (const { event: eventName, data } of parseSSEStream(resp.body!)) {
-        const trimmed = data.trim();
-        if (!trimmed) continue;
+  return proxySSE(c, resp.body!, (eventName, data) => {
+    if (state.completed) return null;
+    const trimmed = data.trim();
+    if (!trimmed) return null;
 
-        // deno-lint-ignore no-explicit-any
-        let parsed: any;
-        try { parsed = JSON.parse(trimmed); } catch { continue; }
-        if (eventName && !parsed.type) parsed.type = eventName;
+    // deno-lint-ignore no-explicit-any
+    let parsed: any;
+    try { parsed = JSON.parse(trimmed); } catch { return null; }
+    if (eventName && !parsed.type) parsed.type = eventName;
 
-        for (const event of translateAnthropicEventToResponsesEvents(parsed, state)) {
-          await stream.writeSSE({ event: event.type, data: JSON.stringify(event) });
-        }
-
-        if (state.completed) break;
-      }
-    } catch (e) {
-      console.error("Responses→Messages reverse translation stream error:", e);
-    }
-  });
+    return translateAnthropicEventToResponsesEvents(parsed, state)
+      .map((e) => ({ event: e.type, data: JSON.stringify(e) }));
+  }, "Responses→Messages reverse translation");
 }

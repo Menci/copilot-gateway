@@ -20,8 +20,17 @@ class DenoKvApiKeyRepo implements ApiKeyRepo {
   }
 
   async findByRawKey(rawKey: string): Promise<ApiKey | null> {
+    // Fast path: reverse index lookup
+    const ref = await this.kv.get<string>(["api_keys_by_key", rawKey]);
+    if (ref.value) return this.getById(ref.value);
+
+    // Slow path: scan all keys (handles keys saved before reverse index existed)
     for await (const entry of this.kv.list<ApiKey>({ prefix: ["api_keys"] })) {
-      if (entry.value.key === rawKey) return entry.value;
+      if (entry.value.key === rawKey) {
+        // Lazily backfill the reverse index
+        await this.kv.set(["api_keys_by_key", rawKey], entry.value.id);
+        return entry.value;
+      }
     }
     return null;
   }
@@ -32,18 +41,29 @@ class DenoKvApiKeyRepo implements ApiKeyRepo {
   }
 
   async save(key: ApiKey): Promise<void> {
-    await this.kv.set(["api_keys", key.id], key);
+    const existing = await this.kv.get<ApiKey>(["api_keys", key.id]);
+    const ops = this.kv.atomic().set(["api_keys", key.id], key).set(["api_keys_by_key", key.key], key.id);
+    if (existing.value && existing.value.key !== key.key) {
+      ops.delete(["api_keys_by_key", existing.value.key]);
+    }
+    await ops.commit();
   }
 
   async delete(id: string): Promise<boolean> {
-    const existing = await this.kv.get(["api_keys", id]);
+    const existing = await this.kv.get<ApiKey>(["api_keys", id]);
     if (!existing.value) return false;
-    await this.kv.delete(["api_keys", id]);
+    await this.kv.atomic()
+      .delete(["api_keys", id])
+      .delete(["api_keys_by_key", existing.value.key])
+      .commit();
     return true;
   }
 
   async deleteAll(): Promise<void> {
     for await (const entry of this.kv.list({ prefix: ["api_keys"] })) {
+      await this.kv.delete(entry.key);
+    }
+    for await (const entry of this.kv.list({ prefix: ["api_keys_by_key"] })) {
       await this.kv.delete(entry.key);
     }
   }

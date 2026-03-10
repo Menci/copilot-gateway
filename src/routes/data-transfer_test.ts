@@ -1,4 +1,4 @@
-import { assertEquals } from "jsr:@std/assert";
+import { assertEquals } from "@std/assert";
 import { Hono } from "hono";
 import { initRepo } from "../repo/mod.ts";
 import { InMemoryRepo } from "../repo/memory.ts";

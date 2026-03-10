@@ -22,6 +22,10 @@ export function listApiKeys() {
   return getRepo().apiKeys.list();
 }
 
+export function getApiKeyById(id: string) {
+  return getRepo().apiKeys.getById(id);
+}
+
 export async function renameApiKey(id: string, name: string) {
   const existing = await getRepo().apiKeys.getById(id);
   if (!existing) return null;

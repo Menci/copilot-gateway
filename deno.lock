@@ -3,6 +3,7 @@
   "specifiers": {
     "jsr:@hono/hono@4": "4.12.5",
     "jsr:@std/assert@*": "1.0.19",
+    "jsr:@std/assert@1": "1.0.19",
     "jsr:@std/internal@^1.0.12": "1.0.12",
     "npm:@anthropic-ai/tokenizer@^0.0.4": "0.0.4",
     "npm:gpt-tokenizer@^3.4.0": "3.4.0"
@@ -48,6 +49,7 @@
   "workspace": {
     "dependencies": [
       "jsr:@hono/hono@4",
+      "jsr:@std/assert@1",
       "npm:@anthropic-ai/tokenizer@^0.0.4",
       "npm:gpt-tokenizer@^3.4.0"
     ],

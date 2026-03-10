@@ -12,6 +12,7 @@ import type {
   AnthropicUserMessage,
 } from "../anthropic-types.ts";
 import { THINKING_PLACEHOLDER } from "../anthropic-types.ts";
+import { safeJsonParse } from "./utils.ts";
 
 import type {
   ChatCompletionResponse,
@@ -269,9 +270,7 @@ export function translateToAnthropic(
 
     if (choice.message.tool_calls) {
       for (const tc of choice.message.tool_calls) {
-        let input: Record<string, unknown> = {};
-        try { input = JSON.parse(tc.function.arguments); }
-        catch { input = { _raw_arguments: tc.function.arguments }; }
+        const input = safeJsonParse(tc.function.arguments);
         allToolBlocks.push({ type: "tool_use", id: tc.id, name: tc.function.name, input });
       }
     }

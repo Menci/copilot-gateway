@@ -29,6 +29,7 @@ import type {
   ResponseTool,
   ResponseToolChoice,
 } from "../responses-types.ts";
+import { decodeSignature, isResponsesOriginSignature, safeJsonParse } from "./utils.ts";
 
 // ── Request: Anthropic → Responses ──
 
@@ -127,15 +128,15 @@ function translateAssistantMessage(msg: AnthropicAssistantMessage, _model: strin
     }
 
     // Thinking blocks with "@" in signature originated from Responses API
-    if (block.type === "thinking" && block.signature?.includes("@")) {
+    if (block.type === "thinking" && isResponsesOriginSignature(block.signature)) {
       flushPendingContent(pendingContent, items, "assistant");
-      const parts = (block.signature ?? "").split("@");
+      const { encryptedContent, reasoningId } = decodeSignature(block.signature ?? "");
       const thinking = block.thinking === THINKING_PLACEHOLDER ? "" : block.thinking;
       items.push({
         type: "reasoning",
-        id: parts[1] ?? "",
+        id: reasoningId ?? "",
         summary: thinking ? [{ type: "summary_text", text: thinking }] : [],
-        encrypted_content: parts[0] ?? "",
+        encrypted_content: encryptedContent ?? "",
       });
       continue;
     }
@@ -415,17 +416,6 @@ function appendToUser(messages: AnthropicMessage[], block: AnthropicToolResultBl
     (last.content as AnthropicUserContentBlock[]).push(block);
   } else {
     messages.push({ role: "user", content: [block] });
-  }
-}
-
-function safeJsonParse(s: string): Record<string, unknown> {
-  try {
-    const parsed = JSON.parse(s);
-    return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
-      ? parsed
-      : { raw_arguments: s };
-  } catch {
-    return { raw_arguments: s };
   }
 }
 

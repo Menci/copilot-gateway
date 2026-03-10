@@ -1,5 +1,4 @@
 import type { Context } from "hono";
-import { streamSSE } from "hono/streaming";
 import { copilotFetch, type CopilotFetchOptions } from "../lib/copilot.ts";
 import { getGithubCredentials } from "../lib/github.ts";
 import { modelSupportsEndpoint, findModel } from "../lib/models-cache.ts";
@@ -14,7 +13,7 @@ import { translateChunkToAnthropicEvents } from "../lib/translate/openai-stream.
 import { translateAnthropicToResponses, translateResponsesToAnthropic } from "../lib/translate/responses.ts";
 import { translateResponsesStreamEvent, createResponsesStreamState } from "../lib/translate/responses-stream.ts";
 import type { ResponseStreamEvent, ResponsesResult } from "../lib/responses-types.ts";
-import { parseSSEStream } from "../lib/sse.ts";
+import { proxySSE } from "../lib/sse.ts";
 
 const ALLOWED_ANTHROPIC_BETAS = new Set([
   "interleaved-thinking-2025-05-14",
@@ -121,7 +120,7 @@ export const messages = async (c: Context) => {
 
     return await handleTranslated(c, payload, githubToken, accountType, { vision, initiator, rawBeta });
   } catch (e: unknown) {
-    return c.json({ error: { type: "api_error", message: e instanceof Error ? e.message : String(e) } }, 502);
+    return c.json({ type: "error", error: { type: "api_error", message: e instanceof Error ? e.message : String(e) } }, 502);
   }
 };
 
@@ -176,15 +175,7 @@ async function forwardMessages(
 
   if (!resp.body) return noBodyResponse(c);
 
-  return streamSSE(c, async (stream) => {
-    try {
-      for await (const { event, data } of parseSSEStream(resp.body!)) {
-        await stream.writeSSE({ event: event || undefined, data });
-      }
-    } catch (e) {
-      console.error("Native messages stream error:", e);
-    }
-  });
+  return proxySSE(c, resp.body, undefined, "Native messages");
 }
 
 async function handleTranslated(
@@ -212,30 +203,23 @@ async function handleTranslated(
 
   if (!resp.body) return noBodyResponse(c);
 
-  return streamSSE(c, async (stream) => {
-    const state: AnthropicStreamState = {
-      messageStartSent: false,
-      contentBlockIndex: 0,
-      contentBlockOpen: false,
-      toolCalls: {},
-    };
+  const state: AnthropicStreamState = {
+    messageStartSent: false,
+    contentBlockIndex: 0,
+    contentBlockOpen: false,
+    toolCalls: {},
+  };
 
-    try {
-      for await (const { data } of parseSSEStream(resp.body!)) {
-        const trimmed = data.trim();
-        if (trimmed === "[DONE]" || !trimmed) continue;
+  return proxySSE(c, resp.body, (_event, data) => {
+    const trimmed = data.trim();
+    if (trimmed === "[DONE]" || !trimmed) return null;
 
-        let chunk: ChatCompletionChunk;
-        try { chunk = JSON.parse(trimmed); } catch { continue; }
+    let chunk: ChatCompletionChunk;
+    try { chunk = JSON.parse(trimmed); } catch { return null; }
 
-        for (const event of translateChunkToAnthropicEvents(chunk, state)) {
-          await stream.writeSSE({ event: event.type, data: JSON.stringify(event) });
-        }
-      }
-    } catch (e) {
-      console.error("Translated stream error:", e);
-    }
-  });
+    return translateChunkToAnthropicEvents(chunk, state)
+      .map((e) => ({ event: e.type, data: JSON.stringify(e) }));
+  }, "Translated");
 }
 
 async function handleWithResponses(
@@ -259,35 +243,19 @@ async function handleWithResponses(
 
   if (!resp.body) return noBodyResponse(c);
 
-  return streamSSE(c, async (stream) => {
-    const state = createResponsesStreamState();
+  const state = createResponsesStreamState();
 
-    try {
-      for await (const { event: eventName, data } of parseSSEStream(resp.body!)) {
-        const trimmed = data.trim();
-        if (!trimmed) continue;
+  return proxySSE(c, resp.body, (eventName, data) => {
+    if (state.messageCompleted) return null;
+    const trimmed = data.trim();
+    if (!trimmed) return null;
 
-        let parsed: ResponseStreamEvent;
-        try { parsed = JSON.parse(trimmed); } catch { continue; }
+    let parsed: ResponseStreamEvent;
+    try { parsed = JSON.parse(trimmed); } catch { return null; }
 
-        if (eventName && !parsed.type) parsed = { ...parsed, type: eventName };
+    if (eventName && !parsed.type) parsed = { ...parsed, type: eventName };
 
-        for (const event of translateResponsesStreamEvent(parsed, state)) {
-          await stream.writeSSE({ event: event.type, data: JSON.stringify(event) });
-        }
-
-        if (state.messageCompleted) break;
-      }
-
-      if (!state.messageCompleted && !state.messageStartSent) {
-        console.warn("Responses stream ended without completion");
-        await stream.writeSSE({
-          event: "error",
-          data: JSON.stringify({ type: "error", error: { type: "api_error", message: "Stream ended without response" } }),
-        });
-      }
-    } catch (e) {
-      console.error("Responses translation stream error:", e);
-    }
-  });
+    return translateResponsesStreamEvent(parsed, state)
+      .map((e) => ({ event: e.type, data: JSON.stringify(e) }));
+  }, "Responses translation");
 }

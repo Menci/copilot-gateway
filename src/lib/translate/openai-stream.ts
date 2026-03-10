@@ -5,8 +5,7 @@ import type {
 import { THINKING_PLACEHOLDER } from "../anthropic-types.ts";
 import type { ChatCompletionChunk } from "../openai-types.ts";
 import { mapStopReason, mapOpenAIUsage, toAnthropicId } from "./openai.ts";
-
-const MAX_CONSECUTIVE_WHITESPACE = 20;
+import { checkWhitespaceOverflow } from "./utils.ts";
 
 function isToolBlockOpen(state: AnthropicStreamState): boolean {
   if (!state.contentBlockOpen) return false;
@@ -34,6 +33,160 @@ function closeThinkingBlock(
   state.contentBlockOpen = false;
   state.thinkingBlockOpen = false;
   state.thinkingSignatureSent = false;
+}
+
+function closeCurrentBlock(
+  state: AnthropicStreamState,
+  events: AnthropicStreamEventData[],
+): void {
+  if (!state.contentBlockOpen) return;
+  events.push({ type: "content_block_stop", index: state.contentBlockIndex });
+  state.contentBlockIndex++;
+  state.contentBlockOpen = false;
+}
+
+function handleReasoningDelta(
+  delta: ChatCompletionChunk["choices"][0]["delta"],
+  state: AnthropicStreamState,
+  events: AnthropicStreamEventData[],
+): void {
+  if (delta.reasoning_text) {
+    if (!state.thinkingBlockOpen) {
+      closeCurrentBlock(state, events);
+      events.push({
+        type: "content_block_start",
+        index: state.contentBlockIndex,
+        content_block: { type: "thinking", thinking: "" },
+      });
+      state.contentBlockOpen = true;
+      state.thinkingBlockOpen = true;
+      state.thinkingHasContent = true;
+    }
+    events.push({
+      type: "content_block_delta",
+      index: state.contentBlockIndex,
+      delta: { type: "thinking_delta", thinking: delta.reasoning_text },
+    });
+  }
+
+  if (delta.reasoning_opaque) {
+    if (state.thinkingBlockOpen) {
+      events.push({
+        type: "content_block_delta",
+        index: state.contentBlockIndex,
+        delta: { type: "signature_delta", signature: delta.reasoning_opaque },
+      });
+      state.thinkingSignatureSent = true;
+    } else {
+      state.pendingReasoningOpaque = (state.pendingReasoningOpaque ?? "") + delta.reasoning_opaque;
+    }
+  }
+}
+
+function handleContentDelta(
+  content: string,
+  state: AnthropicStreamState,
+  events: AnthropicStreamEventData[],
+): void {
+  closeThinkingBlock(state, events);
+
+  if (isToolBlockOpen(state)) {
+    closeCurrentBlock(state, events);
+  }
+  if (!state.contentBlockOpen) {
+    events.push({
+      type: "content_block_start",
+      index: state.contentBlockIndex,
+      content_block: { type: "text", text: "" },
+    });
+    state.contentBlockOpen = true;
+  }
+  events.push({
+    type: "content_block_delta",
+    index: state.contentBlockIndex,
+    delta: { type: "text_delta", text: content },
+  });
+}
+
+function handleToolCallsDelta(
+  toolCalls: NonNullable<ChatCompletionChunk["choices"][0]["delta"]["tool_calls"]>,
+  state: AnthropicStreamState,
+  events: AnthropicStreamEventData[],
+): boolean {
+  closeThinkingBlock(state, events);
+
+  for (const tc of toolCalls) {
+    if (tc.id && tc.function?.name) {
+      closeCurrentBlock(state, events);
+      const blockIdx = state.contentBlockIndex;
+      state.toolCalls[tc.index] = {
+        id: tc.id,
+        name: tc.function.name,
+        anthropicBlockIndex: blockIdx,
+        consecutiveWhitespace: 0,
+      };
+      events.push({
+        type: "content_block_start",
+        index: blockIdx,
+        content_block: { type: "tool_use", id: tc.id, name: tc.function.name, input: {} },
+      });
+      state.contentBlockOpen = true;
+    }
+    if (tc.function?.arguments) {
+      const info = state.toolCalls[tc.index];
+      if (info) {
+        const ws = checkWhitespaceOverflow(tc.function.arguments, info.consecutiveWhitespace);
+        info.consecutiveWhitespace = ws.count;
+
+        if (ws.exceeded) {
+          console.warn("Infinite whitespace detected in tool call arguments, aborting stream");
+          state.aborted = true;
+          closeCurrentBlock(state, events);
+          events.push({
+            type: "error",
+            error: { type: "api_error", message: "Tool call arguments contained excessive whitespace, indicating a degenerate response." },
+          });
+          return true;
+        }
+
+        events.push({
+          type: "content_block_delta",
+          index: info.anthropicBlockIndex,
+          delta: { type: "input_json_delta", partial_json: tc.function.arguments },
+        });
+      }
+    }
+  }
+  return false;
+}
+
+function handleFinishReason(
+  finishReason: string | null,
+  chunk: ChatCompletionChunk,
+  state: AnthropicStreamState,
+  events: AnthropicStreamEventData[],
+): void {
+  closeThinkingBlock(state, events);
+
+  if (state.pendingReasoningOpaque && !state.thinkingHasContent) {
+    events.push(
+      { type: "content_block_start", index: state.contentBlockIndex, content_block: { type: "thinking", thinking: "" } },
+      { type: "content_block_delta", index: state.contentBlockIndex, delta: { type: "thinking_delta", thinking: THINKING_PLACEHOLDER } },
+      { type: "content_block_delta", index: state.contentBlockIndex, delta: { type: "signature_delta", signature: state.pendingReasoningOpaque } },
+      { type: "content_block_stop", index: state.contentBlockIndex },
+    );
+    state.contentBlockIndex++;
+  }
+
+  closeCurrentBlock(state, events);
+  events.push(
+    {
+      type: "message_delta",
+      delta: { stop_reason: mapStopReason(finishReason as Parameters<typeof mapStopReason>[0]), stop_sequence: null },
+      usage: mapOpenAIUsage(chunk.usage),
+    },
+    { type: "message_stop" },
+  );
 }
 
 export function translateChunkToAnthropicEvents(
@@ -64,158 +217,19 @@ export function translateChunkToAnthropicEvents(
     state.messageStartSent = true;
   }
 
-  // reasoning_text → thinking block
-  if (delta.reasoning_text) {
-    if (!state.thinkingBlockOpen) {
-      if (state.contentBlockOpen) {
-        events.push({ type: "content_block_stop", index: state.contentBlockIndex });
-        state.contentBlockIndex++;
-        state.contentBlockOpen = false;
-      }
-      events.push({
-        type: "content_block_start",
-        index: state.contentBlockIndex,
-        content_block: { type: "thinking", thinking: "" },
-      });
-      state.contentBlockOpen = true;
-      state.thinkingBlockOpen = true;
-      state.thinkingHasContent = true;
-    }
-    events.push({
-      type: "content_block_delta",
-      index: state.contentBlockIndex,
-      delta: { type: "thinking_delta", thinking: delta.reasoning_text },
-    });
-  }
-
-  // reasoning_opaque → signature delta
-  if (delta.reasoning_opaque) {
-    if (state.thinkingBlockOpen) {
-      events.push({
-        type: "content_block_delta",
-        index: state.contentBlockIndex,
-        delta: { type: "signature_delta", signature: delta.reasoning_opaque },
-      });
-      state.thinkingSignatureSent = true;
-    } else {
-      state.pendingReasoningOpaque = (state.pendingReasoningOpaque ?? "") + delta.reasoning_opaque;
-    }
-  }
+  handleReasoningDelta(delta, state, events);
 
   if (delta.content) {
-    closeThinkingBlock(state, events);
-
-    if (isToolBlockOpen(state)) {
-      events.push({ type: "content_block_stop", index: state.contentBlockIndex });
-      state.contentBlockIndex++;
-      state.contentBlockOpen = false;
-    }
-    if (!state.contentBlockOpen) {
-      events.push({
-        type: "content_block_start",
-        index: state.contentBlockIndex,
-        content_block: { type: "text", text: "" },
-      });
-      state.contentBlockOpen = true;
-    }
-    events.push({
-      type: "content_block_delta",
-      index: state.contentBlockIndex,
-      delta: { type: "text_delta", text: delta.content },
-    });
+    handleContentDelta(delta.content, state, events);
   }
 
   if (delta.tool_calls) {
-    closeThinkingBlock(state, events);
-
-    for (const tc of delta.tool_calls) {
-      if (tc.id && tc.function?.name) {
-        if (state.contentBlockOpen) {
-          events.push({ type: "content_block_stop", index: state.contentBlockIndex });
-          state.contentBlockIndex++;
-          state.contentBlockOpen = false;
-        }
-        const blockIdx = state.contentBlockIndex;
-        state.toolCalls[tc.index] = {
-          id: tc.id,
-          name: tc.function.name,
-          anthropicBlockIndex: blockIdx,
-          consecutiveWhitespace: 0,
-        };
-        events.push({
-          type: "content_block_start",
-          index: blockIdx,
-          content_block: { type: "tool_use", id: tc.id, name: tc.function.name, input: {} },
-        });
-        state.contentBlockOpen = true;
-      }
-      if (tc.function?.arguments) {
-        const info = state.toolCalls[tc.index];
-        if (info) {
-          // Detect infinite whitespace in function call arguments
-          const args = tc.function.arguments;
-          let wsCount = info.consecutiveWhitespace;
-          let exceeded = false;
-          for (const ch of args) {
-            if (ch === "\r" || ch === "\n" || ch === "\t") {
-              wsCount++;
-              if (wsCount > MAX_CONSECUTIVE_WHITESPACE) { exceeded = true; break; }
-            } else if (ch !== " ") {
-              wsCount = 0;
-            }
-          }
-          info.consecutiveWhitespace = wsCount;
-
-          if (exceeded) {
-            console.warn("Infinite whitespace detected in tool call arguments, aborting stream");
-            state.aborted = true;
-            if (state.contentBlockOpen) {
-              events.push({ type: "content_block_stop", index: state.contentBlockIndex });
-              state.contentBlockOpen = false;
-            }
-            events.push({
-              type: "error",
-              error: { type: "api_error", message: "Tool call arguments contained excessive whitespace, indicating a degenerate response." },
-            });
-            return events;
-          }
-
-          events.push({
-            type: "content_block_delta",
-            index: info.anthropicBlockIndex,
-            delta: { type: "input_json_delta", partial_json: args },
-          });
-        }
-      }
-    }
+    const aborted = handleToolCallsDelta(delta.tool_calls, state, events);
+    if (aborted) return events;
   }
 
   if (choice.finish_reason) {
-    closeThinkingBlock(state, events);
-
-    // Emit pending opaque-only reasoning as a complete thinking block
-    if (state.pendingReasoningOpaque && !state.thinkingHasContent) {
-      events.push(
-        { type: "content_block_start", index: state.contentBlockIndex, content_block: { type: "thinking", thinking: "" } },
-        { type: "content_block_delta", index: state.contentBlockIndex, delta: { type: "thinking_delta", thinking: THINKING_PLACEHOLDER } },
-        { type: "content_block_delta", index: state.contentBlockIndex, delta: { type: "signature_delta", signature: state.pendingReasoningOpaque } },
-        { type: "content_block_stop", index: state.contentBlockIndex },
-      );
-      state.contentBlockIndex++;
-    }
-
-    if (state.contentBlockOpen) {
-      events.push({ type: "content_block_stop", index: state.contentBlockIndex });
-      state.contentBlockOpen = false;
-    }
-    events.push(
-      {
-        type: "message_delta",
-        delta: { stop_reason: mapStopReason(choice.finish_reason), stop_sequence: null },
-        usage: mapOpenAIUsage(chunk.usage),
-      },
-      { type: "message_stop" },
-    );
+    handleFinishReason(choice.finish_reason, chunk, state, events);
   }
 
   return events;

@@ -28,7 +28,8 @@ DenoKvRepo (src/repo/deno.ts)  |  D1Repo (src/repo/d1.ts)
 
 **App core:**
 - `src/app.ts` — Hono application with all routes and middleware (no platform-specific code)
-- `src/middleware/auth.ts` — Unified authentication middleware
+- `src/middleware/auth.ts` — Authentication middleware (`authMiddleware` for API key validation, `adminOnlyMiddleware` for admin routes)
+- `src/middleware/usage.ts` — Usage tracking middleware, intercepts responses to extract token usage via `safeWaitUntil()`
 
 **Environment abstraction:**
 - `src/lib/env.ts` — `initEnv(fn)` / `getEnv(name)` — pluggable env access, initialized by entry file
@@ -38,10 +39,34 @@ DenoKvRepo (src/repo/deno.ts)  |  D1Repo (src/repo/d1.ts)
 - `src/repo/mod.ts` — `initRepo(repo)` / `getRepo()` singleton
 - `src/repo/deno.ts` — `DenoKvRepo` using Deno KV
 - `src/repo/d1.ts` — `D1Repo` using Cloudflare D1 (SQLite)
+- `src/repo/memory.ts` — `InMemoryRepo` using Maps (for testing)
+
+**UI:**
+- `src/ui/login.tsx` — Login page
+- `src/ui/layout.tsx` — Shared HTML layout
+- `src/ui/dashboard.tsx` — Dashboard (admin: four tabs Upstream/API Keys/Usage/Settings; API key user: two tabs API Keys/Usage)
+
+### Authentication & Authorization
+
+There are two roles: **admin** (logs in with `ADMIN_KEY`) and **API key user** (logs in with an API key created by admin).
+
+**Admin** sees all four dashboard tabs: Upstream / API Keys / Usage / Settings. Has full access to all management APIs.
+
+**API key user** sees two dashboard tabs: API Keys / Usage.
+- **API Keys tab**: shows only the caller's own key, with the full key value visible (no redaction — the user already knows their own key since they used it to log in). The tab is read-only: no create/delete/rotate/rename buttons.
+- **Usage tab**: shows usage data filtered to the caller's own key.
+
+**Rules:**
+- `GET /api/keys` returns all keys for admin, only the caller's own key for API key user. Full key values in both cases.
+- All mutating key operations (`POST /api/keys`, `DELETE /api/keys/:id`, `POST /api/keys/:id/rotate`, `PATCH /api/keys/:id`) are admin-only.
+- `GET /api/token-usage` returns all keys' usage for admin, only the caller's key usage for API key user.
+- GitHub account management (`/auth/github/*`, `/auth/me`), Copilot quota, export/import are admin-only.
 
 ### API Routes
 
 All OpenAI-compatible routes are registered at both `/v1/xxx` and `/xxx` paths (e.g. `/v1/responses` and `/responses`), pointing to the same handler.
+
+**Proxy routes (authenticated via API key):**
 
 | Route | File | Description |
 |-------|------|-------------|
@@ -51,6 +76,33 @@ All OpenAI-compatible routes are registered at both `/v1/xxx` and `/xxx` paths (
 | `POST /v1/chat/completions` | `src/routes/chat-completions.ts` | OpenAI Chat Completions passthrough |
 | `GET /v1/models` | `src/routes/models.ts` | Model listing |
 | `POST /v1/embeddings` | `src/routes/embeddings.ts` | Embeddings passthrough |
+
+**Auth routes:**
+
+| Route | File | Description |
+|-------|------|-------------|
+| `POST /auth/login` | `src/routes/auth.ts` | Login with admin key or API key |
+| `POST /auth/logout` | `src/routes/auth.ts` | Logout |
+| `GET /auth/github` | `src/routes/auth.ts` | Initiate GitHub device OAuth flow (admin) |
+| `POST /auth/github/poll` | `src/routes/auth.ts` | Poll for GitHub OAuth completion (admin) |
+| `DELETE /auth/github/:id` | `src/routes/auth.ts` | Disconnect GitHub account (admin) |
+| `POST /auth/github/switch` | `src/routes/auth.ts` | Switch active GitHub account (admin) |
+| `GET /auth/me` | `src/routes/auth.ts` | Get current user info (admin) |
+
+**Dashboard API routes:**
+
+| Route | Auth | File | Description |
+|-------|------|------|-------------|
+| `GET /api/keys` | all | `src/routes/api-keys.ts` | List API keys (admin: all; user: own only) |
+| `POST /api/keys` | admin | `src/routes/api-keys.ts` | Create API key |
+| `POST /api/keys/:id/rotate` | admin | `src/routes/api-keys.ts` | Rotate API key |
+| `PATCH /api/keys/:id` | admin | `src/routes/api-keys.ts` | Rename API key |
+| `DELETE /api/keys/:id` | admin | `src/routes/api-keys.ts` | Delete API key |
+| `GET /api/token-usage` | all | `src/routes/token-usage.ts` | Query token usage (admin: all; user: own only) |
+| `GET /api/models` | all | `src/routes/models.ts` | Model listing |
+| `GET /api/copilot-quota` | admin | `src/routes/copilot-quota.ts` | Fetch upstream Copilot usage/quota |
+| `GET /api/export` | admin | `src/routes/data-transfer.ts` | Export all data as JSON |
+| `POST /api/import` | admin | `src/routes/data-transfer.ts` | Import data with merge/replace modes |
 
 ### Translation Layer
 
@@ -68,24 +120,33 @@ The `/responses` endpoint similarly:
 
 | File | Responsibility |
 |------|----------------|
-| `src/lib/copilot.ts` | Copilot API authentication, request wrapping, VSCode version spoofing |
-| `src/lib/translate.ts` | Anthropic ↔ OpenAI non-streaming translation |
-| `src/lib/translate-stream.ts` | OpenAI SSE → Anthropic SSE streaming translation |
-| `src/lib/translate-responses.ts` | Anthropic ↔ Responses bidirectional translation (both request and response directions) |
-| `src/lib/translate-responses-stream.ts` | Responses SSE → Anthropic SSE streaming translation |
-| `src/lib/translate-anthropic-to-responses-stream.ts` | Anthropic SSE → Responses SSE streaming translation |
-| `src/lib/sse.ts` | SSE stream parsing async generator |
-| `src/lib/usage.ts` | OpenAI → Anthropic usage conversion |
+| `src/lib/copilot.ts` | Copilot API base URLs, version constants, token caching, `copilotFetch()` |
+| `src/lib/github.ts` | GitHub OAuth device flow, account management, credential retrieval |
+| `src/lib/api-keys.ts` | API key generation, listing, deletion, rotation, renaming |
+| `src/lib/usage-tracker.ts` | Token usage recording and querying |
 | `src/lib/models-cache.ts` | Model list caching and capability queries |
+| `src/lib/env.ts` | Pluggable environment variable access (`initEnv`/`getEnv`) |
+| `src/lib/sse.ts` | SSE stream parsing async generator (`parseSSEStream`) |
+| `src/lib/translate/openai.ts` | Anthropic ↔ OpenAI non-streaming translation |
+| `src/lib/translate/openai-stream.ts` | OpenAI SSE → Anthropic SSE streaming translation |
+| `src/lib/translate/responses.ts` | Anthropic ↔ Responses bidirectional translation |
+| `src/lib/translate/responses-stream.ts` | Responses SSE → Anthropic SSE streaming translation |
+| `src/lib/translate/anthropic-to-responses-stream.ts` | Anthropic SSE → Responses SSE streaming translation |
 | `src/lib/anthropic-types.ts` | Anthropic API type definitions |
 | `src/lib/openai-types.ts` | OpenAI API type definitions |
 | `src/lib/responses-types.ts` | Responses API type definitions |
-| `src/lib/stop-reason.ts` | Stop reason mapping |
-| `src/repo/types.ts` | Repository interfaces (ApiKeyRepo, GitHubRepo, UsageRepo) |
-| `src/repo/mod.ts` | `initRepo()`/`getRepo()` singleton registry |
-| `src/repo/deno.ts` | Deno KV repository implementation |
-| `src/repo/d1.ts` | Cloudflare D1 (SQLite) repository implementation |
-| `src/lib/env.ts` | Pluggable environment variable access (`initEnv`/`getEnv`) |
+
+### Testing
+
+Tests use Deno's built-in test runner (`Deno.test`) with `jsr:@std/assert`. Platform-specific repos are mocked via `InMemoryRepo`.
+
+```bash
+deno test
+```
+
+| File | Coverage |
+|------|----------|
+| `src/routes/data-transfer_test.ts` | Export structure, round-trip equivalence, import modes (merge/replace), validation |
 
 ## Code Style Guidelines
 
@@ -153,6 +214,9 @@ deno check main.ts
 
 # Linting
 deno lint
+
+# Run tests
+deno test
 
 # Deploy to production
 deno deploy --prod

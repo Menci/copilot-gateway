@@ -53,13 +53,11 @@ export function DashboardPage() {
                   Upstream
                 </button>
               </template>
-              <template x-if="isAdmin">
               <button @click="switchTab('keys')"
                 class="px-4 py-2 rounded-md text-sm font-medium transition-all"
                 :class="tab === 'keys' ? 'bg-surface-600 text-white' : 'text-gray-500 hover:text-gray-300'">
                 API Keys
               </button>
-              </template>
               <button @click="switchTab('usage')"
                 class="px-4 py-2 rounded-md text-sm font-medium transition-all"
                 :class="tab === 'usage' ? 'bg-surface-600 text-white' : 'text-gray-500 hover:text-gray-300'">
@@ -315,15 +313,14 @@ export function DashboardPage() {
           </div>
           </template>
 
-          <!-- ===================== TAB: API KEYS (ADMIN_KEY only) ===================== -->
-          <template x-if="isAdmin">
+          <!-- ===================== TAB: API KEYS ===================== -->
           <div x-show="tab === 'keys'">
 
             <!-- Key Management -->
             <div class="glass-card p-6 mb-6 animate-in">
               <div class="flex items-center justify-between mb-6">
                 <span class="text-xs font-medium text-gray-500 uppercase tracking-widest">API Keys</span>
-                <div class="flex items-center gap-2">
+                <div x-show="isAdmin" class="flex items-center gap-2">
                   <input type="text" x-model="newKeyName" placeholder="Name" class="!text-xs !py-1.5 !px-3 !w-32 !rounded-lg" @keydown.enter="createNewKey()" />
                   <button @click="createNewKey()" class="btn-primary !text-xs !py-1.5 !px-3 !rounded-lg whitespace-nowrap" :disabled="!newKeyName.trim() || keyCreating">
                     <span x-show="!keyCreating">+ Create</span>
@@ -357,7 +354,7 @@ export function DashboardPage() {
                         <th class="text-left py-2 pr-4 text-xs font-medium text-gray-500 uppercase tracking-widest">Key</th>
                         <th class="text-left py-2 pr-4 text-xs font-medium text-gray-500 uppercase tracking-widest">Created</th>
                         <th class="text-left py-2 pr-4 text-xs font-medium text-gray-500 uppercase tracking-widest">Last Used</th>
-                        <th class="text-right py-2 pr-2 text-xs font-medium text-gray-500 uppercase tracking-widest">Actions</th>
+                        <th x-show="isAdmin" class="text-right py-2 pr-2 text-xs font-medium text-gray-500 uppercase tracking-widest">Actions</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -388,12 +385,15 @@ export function DashboardPage() {
                                 <svg x-show="copied !== 'key-' + k.id" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
                                 <svg x-show="copied === 'key-' + k.id" class="w-4 h-4 text-accent-emerald" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
                               </button>
+                              <template x-if="isAdmin">
                               <button @click.stop="renameKeyById(k.id, k.name)" class="text-gray-600 hover:text-accent-violet transition-colors p-1" title="Rename key">
                                   <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                     <path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/>
                                     <path d="m15 5 4 4"/>
                                   </svg>
                                 </button>
+                              </template>
+                              <template x-if="isAdmin">
                               <button @click.stop="rotateKeyById(k.id, k.name)" class="text-gray-600 hover:text-accent-amber transition-colors p-1" :disabled="keyRotating === k.id" title="Rotate key">
                                   <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                     <path d="M21.5 2v6h-6"/>
@@ -402,12 +402,15 @@ export function DashboardPage() {
                                     <path d="M21.5 12a10 10 0 0 1-16.5 5.7L2.5 16"/>
                                   </svg>
                                 </button>
+                              </template>
+                              <template x-if="isAdmin">
                               <button @click.stop="deleteKeyById(k.id, k.name)" class="text-gray-600 hover:text-accent-rose transition-colors p-1" :disabled="keyDeleting === k.id" title="Delete key">
                                   <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                     <polyline points="3 6 5 6 21 6"/>
                                     <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
                                   </svg>
                                 </button>
+                              </template>
                             </div>
                           </td>
                         </tr>
@@ -505,7 +508,6 @@ export function DashboardPage() {
               </template>
             </div>
           </div>
-          </template>
 
           <!-- ===================== TAB: USAGE ===================== -->
           <div x-show="tab === 'usage'">
@@ -703,8 +705,8 @@ export function DashboardPage() {
       <script>
         function dashboardApp() {
           const isAdmin = localStorage.getItem('isAdmin') === '1';
-          const TABS = isAdmin ? ['upstream', 'keys', 'usage', 'settings'] : ['usage'];
-          const defaultTab = isAdmin ? 'upstream' : 'usage';
+          const TABS = isAdmin ? ['upstream', 'keys', 'usage', 'settings'] : ['keys', 'usage'];
+          const defaultTab = isAdmin ? 'upstream' : 'keys';
           const initTab = TABS.includes(location.hash.slice(1)) ? location.hash.slice(1) : defaultTab;
 
           // Claude tier order: opus=0, sonnet=1, haiku=2
@@ -853,7 +855,7 @@ export function DashboardPage() {
               if (this.tab === 'upstream' && this.isAdmin) {
                 this.loadMe();
                 this.loadUsage();
-              } else if (this.tab === 'keys' && this.isAdmin) {
+              } else if (this.tab === 'keys') {
                 this.loadKeys();
               } else if (this.tab === 'usage') {
                 this.tokenLoading = true;

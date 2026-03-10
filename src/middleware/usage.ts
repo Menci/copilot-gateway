@@ -5,13 +5,14 @@ import type { Context, Next } from "hono";
 import { recordUsage } from "../lib/usage-tracker.ts";
 import { touchApiKeyLastUsed } from "../lib/api-keys.ts";
 
-const API_PATHS = new Set([
-  "/v1/messages", "/v1/chat/completions", "/v1/responses", "/v1/embeddings",
-  "/messages", "/chat/completions", "/responses", "/embeddings",
-]);
+const PROXY_SUFFIXES = ["/messages", "/chat/completions", "/responses", "/embeddings"];
+
+function isProxyPath(path: string): boolean {
+  return PROXY_SUFFIXES.some((s) => path === s || path === `/v1${s}`);
+}
 
 export const usageMiddleware = async (c: Context, next: Next) => {
-  if (!API_PATHS.has(c.req.path) || c.req.method !== "POST") {
+  if (!isProxyPath(c.req.path) || c.req.method !== "POST") {
     return next();
   }
 
