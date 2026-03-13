@@ -337,6 +337,12 @@ Copilot returns different `item.id` values between `response.output_item.added` 
 
 When the model's capabilities include `adaptive_thinking`, we automatically set `thinking: { type: "adaptive" }` and default `effort: "high"`. This enables reasoning for models that support it without requiring client configuration.
 
+### 10. Chat Completions split choices for Claude models
+
+**File**: `src/routes/chat-completions.ts`
+
+Copilot upstream splits Anthropic multi-block responses (text + tool_use) into separate choices instead of merging them into one. For Claude models (`model.startsWith("claude")`), we merge all choices back: concatenate `content` strings, collect `tool_calls` into one array, take the last `finish_reason`. For streaming, all choice indices are remapped to 0.
+
 ## Reference Projects
 
 - [caozhiyuan/copilot-api](https://github.com/caozhiyuan/copilot-api) — A similar TypeScript implementation, referenced for Copilot API interaction patterns
