@@ -2,6 +2,7 @@
 // Used to determine which API path to use (chat/completions, messages, responses)
 
 import { copilotFetch } from "./copilot.ts";
+import { getRepo } from "../repo/mod.ts";
 
 export interface ModelInfo {
   id: string;
@@ -31,10 +32,55 @@ export interface ModelsResponse {
   data: ModelInfo[];
 }
 
-let cachedModels: ModelsResponse | null = null;
-let cachedModelsAt = 0;
-let cachedModelsForToken: string | null = null;
-const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+interface ModelsCacheEntry {
+  fetchedAt: number;
+  data: ModelsResponse;
+}
+
+// Two-level cache for edge deployments:
+// - L1 in-process cache (120s) avoids repeated repo reads on hot isolates.
+// - L2 repo-backed cache (600s) keeps model capability routing coherent across datacenters.
+let inProcessCache: { cacheKey: string; entry: ModelsCacheEntry } | null = null;
+const IN_PROCESS_TTL_MS = 120_000;
+const REPO_TTL_MS = 600_000;
+const MODELS_CACHE_KEY_PREFIX = "models_cache_v1";
+
+export function clearModelsCache(): void {
+  inProcessCache = null;
+}
+
+async function modelsCacheKey(githubToken: string, accountType: string): Promise<string> {
+  const bytes = new TextEncoder().encode(`${accountType}:${githubToken}`);
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  const hash = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+  return `${MODELS_CACHE_KEY_PREFIX}:${hash}`;
+}
+
+function isFresh(entry: ModelsCacheEntry, ttlMs: number, now: number): boolean {
+  return now - entry.fetchedAt < ttlMs;
+}
+
+async function readRepoCache(cacheKey: string): Promise<ModelsCacheEntry | null> {
+  try {
+    const raw = await getRepo().cache.get(cacheKey);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as ModelsCacheEntry;
+    if (typeof parsed?.fetchedAt !== "number" || !parsed.data || !Array.isArray(parsed.data.data)) {
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+async function writeRepoCache(cacheKey: string, entry: ModelsCacheEntry): Promise<void> {
+  try {
+    await getRepo().cache.set(cacheKey, JSON.stringify(entry));
+  } catch {
+    // Repo cache is an optimization; fetch result is still usable without persisting it.
+  }
+}
 
 /** Get cached model list, refreshing if stale or token changed */
 export async function getModels(
@@ -42,8 +88,16 @@ export async function getModels(
   accountType: string,
 ): Promise<ModelsResponse> {
   const now = Date.now();
-  if (cachedModels && now - cachedModelsAt < CACHE_TTL_MS && cachedModelsForToken === githubToken) {
-    return cachedModels;
+  const cacheKey = await modelsCacheKey(githubToken, accountType);
+
+  if (inProcessCache?.cacheKey === cacheKey && isFresh(inProcessCache.entry, IN_PROCESS_TTL_MS, now)) {
+    return inProcessCache.entry.data;
+  }
+
+  const repoEntry = await readRepoCache(cacheKey);
+  if (repoEntry && isFresh(repoEntry, REPO_TTL_MS, now)) {
+    inProcessCache = { cacheKey, entry: repoEntry };
+    return repoEntry.data;
   }
 
   try {
@@ -55,17 +109,28 @@ export async function getModels(
     );
 
     if (resp.ok) {
-      cachedModels = (await resp.json()) as ModelsResponse;
-      cachedModelsAt = now;
-      cachedModelsForToken = githubToken;
-      return cachedModels;
+      const entry = {
+        fetchedAt: now,
+        data: (await resp.json()) as ModelsResponse,
+      } satisfies ModelsCacheEntry;
+      inProcessCache = { cacheKey, entry };
+      await writeRepoCache(cacheKey, entry);
+      return entry.data;
     }
   } catch (e) {
     console.warn("Failed to refresh model cache:", e);
   }
 
-  // Return stale cache if available
-  if (cachedModels) return cachedModels;
+  // Return stale repo cache if available.
+  if (repoEntry) {
+    inProcessCache = { cacheKey, entry: repoEntry };
+    return repoEntry.data;
+  }
+
+  // Return stale in-process cache for the same key if available.
+  if (inProcessCache?.cacheKey === cacheKey) {
+    return inProcessCache.entry.data;
+  }
 
   // Fallback empty
   return { object: "list", data: [] };

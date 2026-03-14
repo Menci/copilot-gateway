@@ -26,6 +26,10 @@ DenoKvRepo (src/repo/deno.ts)  |  D1Repo (src/repo/d1.ts)
 - `main.ts` — Deno Deploy entry: inits env via `Deno.env`, repo via `DenoKvRepo`, calls `Deno.serve()`
 - `entry-cloudflare.ts` — CF Workers entry: inits env from `env` bindings, repo via `D1Repo`
 
+**Global cache state:**
+- `src/lib/copilot.ts` — Copilot access token cache: L1 in-process 60s + L2 repo-backed KV/D1, invalidated on GitHub account add/remove/switch
+- `src/lib/models-cache.ts` — Models cache: L1 in-process 120s + L2 repo-backed KV/D1, keyed by `accountType + githubToken` hash, in-process cache cleared on GitHub account add/remove/switch
+
 **App core:**
 - `src/app.ts` — Hono application with all routes and middleware (no platform-specific code)
 - `src/middleware/auth.ts` — Authentication middleware (`authMiddleware` for API key validation, `adminOnlyMiddleware` for admin routes)
@@ -132,7 +136,7 @@ The `/responses` endpoint similarly:
 | `src/lib/github.ts` | GitHub OAuth device flow, account management, credential retrieval |
 | `src/lib/api-keys.ts` | API key generation, listing, deletion, rotation, renaming |
 | `src/lib/usage-tracker.ts` | Token usage recording and querying |
-| `src/lib/models-cache.ts` | Model list caching and capability queries |
+| `src/lib/models-cache.ts` | Model list caching and capability queries (L1 in-process 120s + L2 repo-backed 600s, keyed by account type + GitHub token hash) |
 | `src/lib/env.ts` | Pluggable environment variable access (`initEnv`/`getEnv`) |
 | `src/lib/sse.ts` | SSE stream parsing async generator (`parseSSEStream`) |
 | `src/lib/translate/openai.ts` | Anthropic ↔ OpenAI non-streaming translation |
@@ -159,6 +163,7 @@ deno test
 | `src/routes/responses_test.ts` | `/v1/responses` route integration: direct passthrough, reverse translation via Messages API, stream ID fix |
 | `src/app-control_test.ts` | Auth/authorization matrix: admin-only routes, API key visibility, public usage endpoint semantics |
 | `src/middleware/usage_test.ts` | Usage middleware for non-streaming and streaming proxy responses, plus `lastUsedAt` updates |
+| `src/lib/models-cache_test.ts` | Two-level model cache behavior: L1 120s reuse, L2 600s reuse after L1 expiry, L2 refresh after expiry |
 
 ## Code Style Guidelines
 

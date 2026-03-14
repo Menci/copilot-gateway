@@ -14,6 +14,7 @@ import {
 import { clearCopilotTokenCache, githubHeaders } from "../lib/copilot.ts";
 import { getEnv } from "../lib/env.ts";
 import { validateApiKey } from "../lib/api-keys.ts";
+import { clearModelsCache } from "../lib/models-cache.ts";
 
 // GitHub OAuth app client ID (same as Copilot extension)
 const GITHUB_CLIENT_ID = "Iv1.b507a08c87ecfe98";
@@ -160,6 +161,7 @@ export const authGithubPoll = async (c: Context) => {
       const accountType = await detectAccountType(data.access_token);
       await addGithubAccount(data.access_token, user, accountType);
       await clearCopilotTokenCache();
+      clearModelsCache();
       return c.json({ status: "complete", user });
     }
 
@@ -216,6 +218,7 @@ export const authGithubDisconnect = async (c: Context) => {
   }
   await removeGithubAccount(userId);
   await clearCopilotTokenCache();
+  clearModelsCache();
   return c.json({ ok: true });
 };
 
@@ -230,6 +233,7 @@ export const authGithubSwitch = async (c: Context) => {
     return c.json({ error: "Account not found" }, 404);
   }
   await clearCopilotTokenCache();
+  clearModelsCache();
   return c.json({ ok: true });
 };
 
