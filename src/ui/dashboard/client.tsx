@@ -131,6 +131,7 @@ export function dashboardAssets() {
           // gateway never sees it. The suffix triggers two client-side effects:
           //   1. getContextWindowForModel() returns 1_000_000 (src/utils/context.ts)
           //   2. "context-1m-2025-08-07" beta header is added (src/utils/betas.ts)
+          //      (the gateway filters this out — Copilot API doesn't support it)
           const addCtx = (id) => {
             const p = this.claudeContextMap[id];
             return p >= 1000000 ? id + '[1m]' : id;

@@ -40,7 +40,6 @@ const ALLOWED_ANTHROPIC_BETAS = new Set([
   "interleaved-thinking-2025-05-14",
   "context-management-2025-06-27",
   "advanced-tool-use-2025-11-20",
-  "context-1m-2025-08-07",
 ]);
 
 const INTERLEAVED_THINKING_BETA = "interleaved-thinking-2025-05-14";
