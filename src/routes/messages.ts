@@ -114,7 +114,8 @@ function stripReservedKeywords(payload: AnthropicMessagesPayload): void {
 
 /** Strip unsupported `scope` from cache_control — Copilot API rejects it */
 function stripCacheControlScope(payload: AnthropicMessagesPayload): void {
-  const strip = (block: Record<string, unknown>) => {
+  // deno-lint-ignore no-explicit-any
+  const strip = (block: any) => {
     const cc = block.cache_control;
     if (cc && typeof cc === "object") {
       const { scope: _, ...rest } = cc as Record<string, unknown>;
@@ -122,11 +123,11 @@ function stripCacheControlScope(payload: AnthropicMessagesPayload): void {
     }
   };
   if (Array.isArray(payload.system)) {
-    for (const block of payload.system) strip(block as Record<string, unknown>);
+    for (const block of payload.system) strip(block);
   }
   for (const msg of payload.messages) {
     if (Array.isArray(msg.content)) {
-      for (const block of msg.content) strip(block as Record<string, unknown>);
+      for (const block of msg.content) strip(block);
     }
   }
 }
