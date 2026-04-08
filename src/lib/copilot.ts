@@ -173,7 +173,10 @@ export async function copilotFetch(
   const baseUrl = copilotBaseUrl(accountType);
   const editorVer = await getEditorVersion();
 
-  const headers = new Headers(init.headers);
+  // Build headers from scratch (whitelist-only) to avoid forwarding
+  // client-side headers (e.g. x-stainless-*, openai-organization, User-Agent: OpenAI/JS)
+  // that cause Copilot API to return 403.
+  const headers = new Headers();
   headers.set("Authorization", `Bearer ${token}`);
   headers.set("Content-Type", "application/json");
   headers.set("editor-version", editorVer);
