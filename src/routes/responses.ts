@@ -65,9 +65,9 @@ function fixApplyPatchTools(payload: ResponsesPayload): void {
         parameters: {
           type: "object",
           properties: {
-            patch: { type: "string", description: "The patch to apply" },
+            input: { type: "string", description: "The entire contents of the apply_patch command" },
           },
-          required: ["patch"],
+          required: ["input"],
           additionalProperties: false,
         },
         strict: false,
