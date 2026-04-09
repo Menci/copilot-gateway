@@ -75,6 +75,7 @@ export function translateToOpenAI(
     max_tokens: payload.max_tokens,
     stop: payload.stop_sequences,
     stream: payload.stream,
+    ...(payload.stream ? { stream_options: { include_usage: true } } : {}),
     temperature: payload.temperature,
     top_p: payload.top_p,
     user: payload.metadata?.user_id,

@@ -71,6 +71,7 @@ function interceptStreaming(c: Context, keyId: string, model: string): void {
 
   let inputTokens = 0;
   let outputTokens = 0;
+  let gotInputFromStart = false;
   let buffer = "";
 
   const transform = new TransformStream<Uint8Array, Uint8Array>({
@@ -89,9 +90,10 @@ function interceptStreaming(c: Context, keyId: string, model: string): void {
 
         try {
           const parsed = JSON.parse(data);
-          extractUsageFromStreamEvent(parsed, (i, o) => {
+          extractUsageFromStreamEvent(parsed, gotInputFromStart, (i, o, fromStart) => {
             inputTokens += i;
             outputTokens += o;
+            if (fromStart) gotInputFromStart = true;
           });
         } catch { /* ignore non-JSON lines */ }
       }
@@ -103,9 +105,10 @@ function interceptStreaming(c: Context, keyId: string, model: string): void {
         if (data && data !== "[DONE]") {
           try {
             const parsed = JSON.parse(data);
-            extractUsageFromStreamEvent(parsed, (i, o) => {
+            extractUsageFromStreamEvent(parsed, gotInputFromStart, (i, o, fromStart) => {
               inputTokens += i;
               outputTokens += o;
+              if (fromStart) gotInputFromStart = true;
             });
           } catch { /* ignore */ }
         }
@@ -149,7 +152,7 @@ interface UsageInfo {
 function extractUsageFromJson(json: any): UsageInfo | null {
   // Anthropic Messages: { usage: { input_tokens, output_tokens } }
   if (json?.usage?.input_tokens != null) {
-    return { input: json.usage.input_tokens, output: json.usage.output_tokens ?? 0 };
+    return { input: json.usage.input_tokens + (json.usage.cache_read_input_tokens ?? 0) + (json.usage.cache_creation_input_tokens ?? 0), output: json.usage.output_tokens ?? 0 };
   }
   // OpenAI Chat Completions: { usage: { prompt_tokens, completion_tokens } }
   if (json?.usage?.prompt_tokens != null) {
@@ -159,22 +162,35 @@ function extractUsageFromJson(json: any): UsageInfo | null {
 }
 
 // deno-lint-ignore no-explicit-any
-function extractUsageFromStreamEvent(parsed: any, add: (input: number, output: number) => void): void {
+function extractUsageFromStreamEvent(parsed: any, gotInputFromStart: boolean, add: (input: number, output: number, fromStart: boolean) => void): void {
   // Anthropic message_start: { message: { usage: { input_tokens } } }
-  if (parsed.type === "message_start" && parsed.message?.usage?.input_tokens != null) {
-    add(parsed.message.usage.input_tokens, 0);
+  if (parsed.type === "message_start" && parsed.message?.usage) {
+    const u = parsed.message.usage;
+    const inputFromStart = (u.input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0);
+    if (inputFromStart > 0) {
+      add(inputFromStart, 0, true);
+    }
   }
-  // Anthropic message_delta: { usage: { output_tokens } }
+  // Anthropic message_delta: { usage: { output_tokens, input_tokens? } }
+  // In translated streams (OpenAI→Anthropic), the message_start may have
+  // input_tokens=0 because the upstream usage-only chunk arrives after the
+  // first chunk. The usage-only chunk generates a supplemental message_delta
+  // carrying both input_tokens and output_tokens. We only extract input_tokens
+  // from message_delta when message_start didn't already provide them.
   if (parsed.type === "message_delta" && parsed.usage?.output_tokens != null) {
-    add(0, parsed.usage.output_tokens);
+    let deltaInput = 0;
+    if (!gotInputFromStart && parsed.usage.input_tokens != null) {
+      deltaInput = (parsed.usage.input_tokens ?? 0) + (parsed.usage.cache_read_input_tokens ?? 0) + (parsed.usage.cache_creation_input_tokens ?? 0);
+    }
+    add(deltaInput, parsed.usage.output_tokens, false);
   }
   // Responses response.completed: { response: { usage: { input_tokens, output_tokens } } }
   if (parsed.type === "response.completed" && parsed.response?.usage) {
     const u = parsed.response.usage;
-    add(u.input_tokens ?? 0, u.output_tokens ?? 0);
+    add(u.input_tokens ?? 0, u.output_tokens ?? 0, false);
   }
   // OpenAI Chat Completions chunk with usage
   if (parsed.usage?.prompt_tokens != null) {
-    add(parsed.usage.prompt_tokens, parsed.usage.completion_tokens ?? 0);
+    add(parsed.usage.prompt_tokens, parsed.usage.completion_tokens ?? 0, false);
   }
 }

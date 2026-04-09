@@ -354,6 +354,7 @@ async function handleTranslated(
 
   // Always stream upstream to avoid blocking on large responses
   openAIPayload.stream = true;
+  openAIPayload.stream_options = { include_usage: true };
 
   const resp = await copilotFetch(
     "/chat/completions",

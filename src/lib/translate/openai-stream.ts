@@ -190,6 +190,9 @@ function handleFinishReason(
   }
 
   closeCurrentBlock(state, events);
+
+  if (chunk.usage) state.usageSent = true;
+
   events.push(
     {
       type: "message_delta",
@@ -206,7 +209,20 @@ export function translateChunkToAnthropicEvents(
 ): AnthropicStreamEventData[] {
   const events: AnthropicStreamEventData[] = [];
 
-  if (chunk.choices.length === 0 || state.aborted) return events;
+  // Handle usage-only chunk (choices=[], usage present) — OpenAI sends this
+  // as the final chunk when stream_options.include_usage is true
+  if (chunk.choices.length === 0) {
+    if (!state.aborted && chunk.usage && !state.usageSent) {
+      state.usageSent = true;
+      events.push({
+        type: "message_delta",
+        delta: { stop_reason: null, stop_sequence: null },
+        usage: mapOpenAIUsage(chunk.usage),
+      });
+    }
+    return events;
+  }
+  if (state.aborted) return events;
 
   const choice = chunk.choices[0];
   const { delta } = choice;

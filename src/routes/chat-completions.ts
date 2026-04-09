@@ -383,6 +383,9 @@ async function handleViaCompletionsApi(
 
   // Always stream upstream to avoid blocking on large responses
   body.stream = true;
+  if (!body.stream_options) {
+    body.stream_options = { include_usage: true };
+  }
 
   const resp = await copilotFetch(
     "/chat/completions",

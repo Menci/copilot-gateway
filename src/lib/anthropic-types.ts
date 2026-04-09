@@ -213,4 +213,6 @@ export interface AnthropicStreamState {
   thinkingSignatureSent?: boolean;
   /** Accumulated reasoning_opaque when no thinking block was open to receive it */
   pendingReasoningOpaque?: string;
+  /** Whether usage has already been sent in a message_delta event */
+  usageSent?: boolean;
 }

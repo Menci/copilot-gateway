@@ -16,6 +16,8 @@ export interface ChatCompletionsPayload {
     | "required"
     | { type: "function"; function: { name: string } }
     | null;
+  /** Request usage stats in streaming responses */
+  stream_options?: { include_usage: boolean } | null;
   /** Thinking budget for reasoning models */
   thinking_budget?: number;
 }
