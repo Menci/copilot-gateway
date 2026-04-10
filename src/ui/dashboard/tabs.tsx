@@ -887,7 +887,7 @@ export function renderUsageTab() {
           <div class="flex items-center gap-3">
             <span
               class="text-xs font-medium text-gray-500 uppercase tracking-widest"
-            >Token Usage</span>
+            >Token Usage — By Key</span>
             <template x-if="tokenLoading">
               <svg
                 class="animate-spin h-3.5 w-3.5 text-gray-500"
@@ -936,7 +936,7 @@ export function renderUsageTab() {
         </div>
 
         <div style="height: 320px; position: relative;">
-          <template x-if="tokenLoading && !tokenChart">
+          <template x-if="tokenLoading && !chartsReady">
             <div class="absolute inset-0 flex items-center justify-center">
               <div class="flex flex-col items-center gap-3">
                 <svg
@@ -962,17 +962,26 @@ export function renderUsageTab() {
               </div>
             </div>
           </template>
-          <canvas id="tokenChart"></canvas>
+          <canvas id="tokenChartByKey"></canvas>
+        </div>
+
+        <div class="mt-6 pt-5 border-t border-white/5">
+          <span
+            class="text-xs font-medium text-gray-500 uppercase tracking-widest mb-4 block"
+          >By Model</span>
+          <div style="height: 320px; position: relative;">
+            <canvas id="tokenChartByModel"></canvas>
+          </div>
         </div>
 
         <div class="grid grid-cols-3 gap-4 mt-6 pt-5 border-t border-white/5">
           <div class="text-center">
             <p class="text-xs text-gray-500 mb-1">Requests</p>
-            <template x-if="tokenLoading && !tokenChart">
+            <template x-if="tokenLoading && !chartsReady">
               <div class="h-7 w-16 mx-auto bg-surface-600 rounded animate-pulse">
               </div>
             </template>
-            <template x-if="!tokenLoading || tokenChart">
+            <template x-if="!tokenLoading || chartsReady">
               <p
                 class="text-lg font-bold font-mono text-white"
                 x-text="tokenSummary.requests.toLocaleString()"
@@ -982,11 +991,11 @@ export function renderUsageTab() {
           </div>
           <div class="text-center">
             <p class="text-xs text-gray-500 mb-1">Input Tokens</p>
-            <template x-if="tokenLoading && !tokenChart">
+            <template x-if="tokenLoading && !chartsReady">
               <div class="h-7 w-20 mx-auto bg-surface-600 rounded animate-pulse">
               </div>
             </template>
-            <template x-if="!tokenLoading || tokenChart">
+            <template x-if="!tokenLoading || chartsReady">
               <p
                 class="text-lg font-bold font-mono text-white"
                 x-text="tokenSummary.input.toLocaleString()"
@@ -996,11 +1005,11 @@ export function renderUsageTab() {
           </div>
           <div class="text-center">
             <p class="text-xs text-gray-500 mb-1">Output Tokens</p>
-            <template x-if="tokenLoading && !tokenChart">
+            <template x-if="tokenLoading && !chartsReady">
               <div class="h-7 w-20 mx-auto bg-surface-600 rounded animate-pulse">
               </div>
             </template>
-            <template x-if="!tokenLoading || tokenChart">
+            <template x-if="!tokenLoading || chartsReady">
               <p
                 class="text-lg font-bold font-mono text-white"
                 x-text="tokenSummary.output.toLocaleString()"
