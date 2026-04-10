@@ -1,11 +1,15 @@
 {
   "private": true,
+  "scripts": {
+    "test": "vitest run"
+  },
   "dependencies": {
     "@anthropic-ai/tokenizer": "^0.0.4",
     "gpt-tokenizer": "^3.4.0",
     "hono": "^4"
   },
   "devDependencies": {
+    "vitest": "^4.1.4",
     "wrangler": "^4.81.0"
   }
 }
