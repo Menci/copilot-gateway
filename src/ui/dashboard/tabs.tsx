@@ -1010,6 +1010,13 @@ export function renderUsageTab() {
           </div>
         </div>
       </div>
+
+      <!-- Per-Key Model Usage Charts -->
+      <div class="border-t border-gray-600 mt-12 pt-8 mb-6">
+        <h3 class="text-base font-semibold text-gray-300 uppercase tracking-wider mb-2">Usage by Model</h3>
+        <p class="text-xs text-gray-500">Token usage breakdown per API key and model</p>
+      </div>
+      <div id="perKeyChartsContainer"></div>
     </div>
   `;
 }

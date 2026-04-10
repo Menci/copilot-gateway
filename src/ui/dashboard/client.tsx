@@ -79,6 +79,7 @@ export function dashboardAssets() {
       tokenRange: 'today',
       tokenData: [],
       tokenChart: null,
+      perKeyCharts: [],
       tokenLoading: false,
       tokenSummary: { requests: 0, input: 0, output: 0 },
       exportLoading: false,
@@ -182,7 +183,7 @@ export function dashboardAssets() {
             this.tokenLoading = true;
             this.fetchTokenData().then(() => {
               if (this.tab === 'usage') {
-                this.$nextTick().then(() => this.renderTokenChart());
+                this.$nextTick().then(() => { this.renderTokenChart(); this.renderPerKeyCharts(); });
               }
             });
           }
@@ -209,6 +210,8 @@ export function dashboardAssets() {
             this.tokenChart.stop();
             this.tokenChart.destroy();
             this.tokenChart = null;
+            for (const c of this.perKeyCharts) { c.stop(); c.destroy(); }
+            this.perKeyCharts = [];
           }
           this.tab = t;
           location.hash = '#' + t;
@@ -221,6 +224,7 @@ export function dashboardAssets() {
             if (this.tab === 'usage') {
               await this.$nextTick();
               this.renderTokenChart();
+              this.renderPerKeyCharts();
             }
           } else if (t === 'keys') {
             await this.loadKeys();
@@ -594,6 +598,7 @@ export function dashboardAssets() {
             if (this.tab !== 'usage') return;
             await this.$nextTick();
             this.renderTokenChart();
+            this.renderPerKeyCharts();
           },
 
           renderTokenChart() {
@@ -727,6 +732,156 @@ export function dashboardAssets() {
                 },
               },
             });
+          },
+
+          renderPerKeyCharts() {
+            // Destroy existing per-key charts
+            for (const c of this.perKeyCharts) { c.stop(); c.destroy(); }
+            this.perKeyCharts = [];
+
+            const palette = ['#00e5ff', '#00e676', '#ffd740', '#ff5252', '#7c4dff', '#ff6e40', '#64ffda', '#eeff41', '#40c4ff', '#ea80fc'];
+            const isDaily = this.tokenRange !== 'today';
+            const data = this.tokenData;
+
+            // Group data by keyId
+            const keyGroups = new Map();
+            for (const r of data) {
+              if (!keyGroups.has(r.keyId)) keyGroups.set(r.keyId, { name: r.keyName || r.keyId.slice(0, 8), records: [] });
+              keyGroups.get(r.keyId).records.push(r);
+            }
+
+            // Build buckets (same as renderTokenChart)
+            const bucketMap = new Map();
+            const now = new Date();
+            if (this.tokenRange === 'today') {
+              for (let h = 0; h < 24; h++) {
+                const d = new Date(now);
+                d.setHours(h, 0, 0, 0);
+                bucketMap.set(this.localHourKey(d), String(h).padStart(2, '0') + ':00 \u2013 ' + String((h + 1) % 24).padStart(2, '0') + ':00');
+              }
+            } else {
+              const days = this.tokenRange === '7d' ? 7 : 30;
+              for (let i = days - 1; i >= 0; i--) {
+                const d = new Date(now);
+                d.setDate(d.getDate() - i);
+                d.setHours(0, 0, 0, 0);
+                bucketMap.set(this.localDateKey(d), d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }));
+              }
+            }
+
+            const labels = [...bucketMap.values()];
+            const bucketKeys = [...bucketMap.keys()];
+
+            // Remove old containers and create new ones
+            const container = document.getElementById('perKeyChartsContainer');
+            if (!container) return;
+            container.innerHTML = '';
+
+            for (const [keyId, group] of keyGroups) {
+              // Aggregate by model per bucket
+              const modelSet = new Set();
+              const agg = new Map();
+              for (const [key] of bucketMap) agg.set(key, new Map());
+              for (const r of group.records) {
+                const utc = new Date(r.hour + ':00:00Z');
+                const bucket = isDaily ? this.localDateKey(utc) : this.localHourKey(utc);
+                if (!agg.has(bucket)) continue;
+                modelSet.add(r.model);
+                const m = agg.get(bucket);
+                m.set(r.model, (m.get(r.model) || 0) + r.inputTokens + r.outputTokens);
+              }
+
+              const models = [...modelSet].sort();
+              if (models.length === 0) continue;
+
+              const datasets = models.map((model, i) => {
+                const c = palette[i % palette.length];
+                return {
+                  label: model,
+                  data: bucketKeys.map((k) => agg.get(k)?.get(model) || 0),
+                  borderColor: c,
+                  backgroundColor: c + '18',
+                  borderWidth: 2,
+                  pointRadius: 2,
+                  pointHoverRadius: 5,
+                  tension: 0.3,
+                  fill: true,
+                };
+              });
+
+              // Create wrapper div
+              const wrapper = document.createElement('div');
+              wrapper.className = 'glass-card p-6 mb-6';
+              const h3 = document.createElement('h3');
+              h3.style.cssText = 'color:#e0e0e0;font-size:14px;font-weight:600;margin-bottom:12px';
+              h3.textContent = group.name;
+              const chartDiv = document.createElement('div');
+              chartDiv.style.cssText = 'height:280px;position:relative';
+              const canvasEl = document.createElement('canvas');
+              chartDiv.appendChild(canvasEl);
+              wrapper.appendChild(h3);
+              wrapper.appendChild(chartDiv);
+              container.appendChild(wrapper);
+
+              const canvas = canvasEl;
+              const chart = new Chart(canvas, {
+                type: 'line',
+                data: { labels, datasets },
+                options: {
+                  responsive: true,
+                  maintainAspectRatio: false,
+                  animation: false,
+                  interaction: { mode: 'index', intersect: false },
+                  plugins: {
+                    legend: {
+                      position: 'bottom',
+                      labels: {
+                        color: '#9e9e9e',
+                        font: { size: 11, family: "'DM Sans', sans-serif" },
+                        boxWidth: 12,
+                        padding: 16,
+                        usePointStyle: true,
+                        pointStyle: 'circle',
+                      },
+                    },
+                    tooltip: {
+                      backgroundColor: 'rgba(12,16,21,0.95)',
+                      borderColor: 'rgba(255,255,255,0.1)',
+                      borderWidth: 1,
+                      titleColor: '#e0e0e0',
+                      bodyColor: '#b0bec5',
+                      padding: 12,
+                      bodyFont: { family: "'JetBrains Mono', monospace", size: 11 },
+                      callbacks: {
+                        label: (ctx) => ctx.dataset.label + ': ' + ctx.parsed.y.toLocaleString() + ' tokens',
+                      },
+                    },
+                  },
+                  scales: {
+                    x: {
+                      grid: { color: 'rgba(255,255,255,0.04)' },
+                      ticks: {
+                        color: '#9e9e9e',
+                        font: { size: 10, family: "'DM Sans', sans-serif" },
+                        maxRotation: 45,
+                      },
+                      border: { color: 'rgba(255,255,255,0.06)' },
+                    },
+                    y: {
+                      beginAtZero: true,
+                      grid: { color: 'rgba(255,255,255,0.04)' },
+                      ticks: {
+                        color: '#9e9e9e',
+                        font: { size: 10, family: "'JetBrains Mono', monospace" },
+                        callback: (v) => v >= 1e6 ? (v / 1e6).toFixed(1) + 'M' : v >= 1e3 ? (v / 1e3).toFixed(0) + 'K' : v,
+                      },
+                      border: { color: 'rgba(255,255,255,0.06)' },
+                    },
+                  },
+                },
+              });
+              this.perKeyCharts.push(chart);
+            }
           },
 
           switchTokenRange(range) {
