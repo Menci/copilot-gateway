@@ -165,28 +165,32 @@ class D1UsageRepo implements UsageRepo {
     requests: number,
     inputTokens: number,
     outputTokens: number,
+    cacheReadTokens = 0,
+    cacheCreationTokens = 0,
   ): Promise<void> {
     await this.db
       .prepare(
-        `INSERT INTO usage (key_id, model, hour, requests, input_tokens, output_tokens) VALUES (?, ?, ?, ?, ?, ?)
+        `INSERT INTO usage (key_id, model, hour, requests, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT (key_id, model, hour) DO UPDATE SET
            requests = requests + excluded.requests,
            input_tokens = input_tokens + excluded.input_tokens,
-           output_tokens = output_tokens + excluded.output_tokens`,
+           output_tokens = output_tokens + excluded.output_tokens,
+           cache_read_tokens = cache_read_tokens + excluded.cache_read_tokens,
+           cache_creation_tokens = cache_creation_tokens + excluded.cache_creation_tokens`,
       )
-      .bind(keyId, model, hour, requests, inputTokens, outputTokens)
+      .bind(keyId, model, hour, requests, inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens)
       .run();
   }
 
   async query(opts: { keyId?: string; start: string; end: string }): Promise<UsageRecord[]> {
     const sql = opts.keyId
-      ? "SELECT key_id, model, hour, requests, input_tokens, output_tokens FROM usage WHERE key_id = ? AND hour >= ? AND hour < ? ORDER BY hour"
-      : "SELECT key_id, model, hour, requests, input_tokens, output_tokens FROM usage WHERE hour >= ? AND hour < ? ORDER BY hour";
+      ? "SELECT key_id, model, hour, requests, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens FROM usage WHERE key_id = ? AND hour >= ? AND hour < ? ORDER BY hour"
+      : "SELECT key_id, model, hour, requests, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens FROM usage WHERE hour >= ? AND hour < ? ORDER BY hour";
     const binds = opts.keyId ? [opts.keyId, opts.start, opts.end] : [opts.start, opts.end];
     const { results } = await this.db
       .prepare(sql)
       .bind(...binds)
-      .all<{ key_id: string; model: string; hour: string; requests: number; input_tokens: number; output_tokens: number }>();
+      .all<{ key_id: string; model: string; hour: string; requests: number; input_tokens: number; output_tokens: number; cache_read_tokens: number; cache_creation_tokens: number }>();
     return results.map((r) => ({
       keyId: r.key_id,
       model: r.model,
@@ -194,13 +198,15 @@ class D1UsageRepo implements UsageRepo {
       requests: r.requests,
       inputTokens: r.input_tokens,
       outputTokens: r.output_tokens,
+      cacheReadTokens: r.cache_read_tokens ?? 0,
+      cacheCreationTokens: r.cache_creation_tokens ?? 0,
     }));
   }
 
   async listAll(): Promise<UsageRecord[]> {
     const { results } = await this.db
-      .prepare("SELECT key_id, model, hour, requests, input_tokens, output_tokens FROM usage ORDER BY hour")
-      .all<{ key_id: string; model: string; hour: string; requests: number; input_tokens: number; output_tokens: number }>();
+      .prepare("SELECT key_id, model, hour, requests, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens FROM usage ORDER BY hour")
+      .all<{ key_id: string; model: string; hour: string; requests: number; input_tokens: number; output_tokens: number; cache_read_tokens: number; cache_creation_tokens: number }>();
     return results.map((r) => ({
       keyId: r.key_id,
       model: r.model,
@@ -208,19 +214,23 @@ class D1UsageRepo implements UsageRepo {
       requests: r.requests,
       inputTokens: r.input_tokens,
       outputTokens: r.output_tokens,
+      cacheReadTokens: r.cache_read_tokens ?? 0,
+      cacheCreationTokens: r.cache_creation_tokens ?? 0,
     }));
   }
 
   async set(record: UsageRecord): Promise<void> {
     await this.db
       .prepare(
-        `INSERT INTO usage (key_id, model, hour, requests, input_tokens, output_tokens) VALUES (?, ?, ?, ?, ?, ?)
+        `INSERT INTO usage (key_id, model, hour, requests, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT (key_id, model, hour) DO UPDATE SET
            requests = excluded.requests,
            input_tokens = excluded.input_tokens,
-           output_tokens = excluded.output_tokens`,
+           output_tokens = excluded.output_tokens,
+           cache_read_tokens = excluded.cache_read_tokens,
+           cache_creation_tokens = excluded.cache_creation_tokens`,
       )
-      .bind(record.keyId, record.model, record.hour, record.requests, record.inputTokens, record.outputTokens)
+      .bind(record.keyId, record.model, record.hour, record.requests, record.inputTokens, record.outputTokens, record.cacheReadTokens || 0, record.cacheCreationTokens || 0)
       .run();
   }
 

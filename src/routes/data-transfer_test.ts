@@ -41,6 +41,8 @@ const USAGE_1: UsageRecord = {
   requests: 5,
   inputTokens: 1000,
   outputTokens: 500,
+  cacheReadTokens: 0,
+  cacheCreationTokens: 0,
 };
 
 const USAGE_2: UsageRecord = {
@@ -50,6 +52,8 @@ const USAGE_2: UsageRecord = {
   requests: 3,
   inputTokens: 2000,
   outputTokens: 800,
+  cacheReadTokens: 0,
+  cacheCreationTokens: 0,
 };
 
 // ---- Helpers ----

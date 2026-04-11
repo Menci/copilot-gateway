@@ -102,6 +102,8 @@ class MemoryUsageRepo implements UsageRepo {
     requests: number,
     inputTokens: number,
     outputTokens: number,
+    cacheReadTokens = 0,
+    cacheCreationTokens = 0,
   ): Promise<void> {
     const k = this.key({ keyId, model, hour });
     const existing = this.store.get(k);
@@ -109,8 +111,10 @@ class MemoryUsageRepo implements UsageRepo {
       existing.requests += requests;
       existing.inputTokens += inputTokens;
       existing.outputTokens += outputTokens;
+      existing.cacheReadTokens += cacheReadTokens;
+      existing.cacheCreationTokens += cacheCreationTokens;
     } else {
-      this.store.set(k, { keyId, model, hour, requests, inputTokens, outputTokens });
+      this.store.set(k, { keyId, model, hour, requests, inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens });
     }
     return Promise.resolve();
   }

@@ -948,6 +948,51 @@ export function renderUsageTab() {
             </template>
           </div>
         </div>
+
+        <div class="grid grid-cols-3 gap-4 mt-4 pt-4 border-t border-white/5">
+          <div class="text-center">
+            <p class="text-xs text-gray-500 mb-1">Cache Read</p>
+            <template x-if="tokenLoading && !chartsReady">
+              <div class="h-7 w-20 mx-auto bg-surface-600 rounded animate-pulse">
+              </div>
+            </template>
+            <template x-if="!tokenLoading || chartsReady">
+              <p
+                class="text-lg font-bold font-mono text-white"
+                x-text="tokenSummary.cacheRead.toLocaleString()"
+              >
+              </p>
+            </template>
+          </div>
+          <div class="text-center">
+            <p class="text-xs text-gray-500 mb-1">Cache Write</p>
+            <template x-if="tokenLoading && !chartsReady">
+              <div class="h-7 w-20 mx-auto bg-surface-600 rounded animate-pulse">
+              </div>
+            </template>
+            <template x-if="!tokenLoading || chartsReady">
+              <p
+                class="text-lg font-bold font-mono text-white"
+                x-text="tokenSummary.cacheCreation.toLocaleString()"
+              >
+              </p>
+            </template>
+          </div>
+          <div class="text-center">
+            <p class="text-xs text-gray-500 mb-1">Cache Hit Rate</p>
+            <template x-if="tokenLoading && !chartsReady">
+              <div class="h-7 w-16 mx-auto bg-surface-600 rounded animate-pulse">
+              </div>
+            </template>
+            <template x-if="!tokenLoading || chartsReady">
+              <p
+                class="text-lg font-bold font-mono text-green-400"
+                x-text="(tokenSummary.cacheRead + tokenSummary.cacheCreation) > 0 ? ((tokenSummary.cacheRead / (tokenSummary.cacheRead + tokenSummary.cacheCreation)) * 100).toFixed(1) + '%' : '\u2014'"
+              >
+              </p>
+            </template>
+          </div>
+        </div>
       </div>
     </div>
   `;

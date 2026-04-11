@@ -24,6 +24,8 @@ export interface UsageRecord {
   requests: number;
   inputTokens: number;
   outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
 }
 
 export interface ApiKeyRepo {
@@ -54,6 +56,8 @@ export interface UsageRepo {
     requests: number,
     inputTokens: number,
     outputTokens: number,
+    cacheReadTokens?: number,
+    cacheCreationTokens?: number,
   ): Promise<void>;
   query(opts: { keyId?: string; start: string; end: string }): Promise<UsageRecord[]>;
   listAll(): Promise<UsageRecord[]>;

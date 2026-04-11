@@ -48,7 +48,7 @@ async function interceptNonStreaming(c: Context, keyId: string, model: string): 
 
   const usage = extractUsageFromJson(json);
   if (usage) {
-    const p1 = recordUsage(keyId, model, usage.input, usage.output).catch((e) =>
+    const p1 = recordUsage(keyId, model, usage.input, usage.output, usage.cacheRead, usage.cacheCreation).catch((e) =>
       console.error("Usage record error:", e)
     );
     const p2 = touchApiKeyLastUsed(keyId).catch((e) =>
@@ -66,6 +66,8 @@ function interceptStreaming(c: Context, keyId: string, model: string): void {
 
   let inputTokens = 0;
   let outputTokens = 0;
+  let cacheReadTokens = 0;
+  let cacheCreationTokens = 0;
   let gotInputFromStart = false;
   let buffer = "";
 
@@ -85,9 +87,11 @@ function interceptStreaming(c: Context, keyId: string, model: string): void {
 
         try {
           const parsed = JSON.parse(data);
-          extractUsageFromStreamEvent(parsed, gotInputFromStart, (i, o, fromStart) => {
+          extractUsageFromStreamEvent(parsed, gotInputFromStart, (i, o, fromStart, cr, cc) => {
             inputTokens += i;
             outputTokens += o;
+            cacheReadTokens += cr ?? 0;
+            cacheCreationTokens += cc ?? 0;
             if (fromStart) gotInputFromStart = true;
           });
         } catch { /* ignore non-JSON lines */ }
@@ -100,9 +104,11 @@ function interceptStreaming(c: Context, keyId: string, model: string): void {
         if (data && data !== "[DONE]") {
           try {
             const parsed = JSON.parse(data);
-            extractUsageFromStreamEvent(parsed, gotInputFromStart, (i, o, fromStart) => {
+            extractUsageFromStreamEvent(parsed, gotInputFromStart, (i, o, fromStart, cr, cc) => {
               inputTokens += i;
               outputTokens += o;
+              cacheReadTokens += cr ?? 0;
+              cacheCreationTokens += cc ?? 0;
               if (fromStart) gotInputFromStart = true;
             });
           } catch { /* ignore */ }
@@ -110,7 +116,7 @@ function interceptStreaming(c: Context, keyId: string, model: string): void {
       }
 
       if (inputTokens > 0 || outputTokens > 0) {
-        const p1 = recordUsage(keyId, model, inputTokens, outputTokens).catch((e) =>
+        const p1 = recordUsage(keyId, model, inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens).catch((e) =>
           console.error("Usage record error:", e)
         );
         const p2 = touchApiKeyLastUsed(keyId).catch((e) =>
@@ -141,29 +147,36 @@ function safeWaitUntil(c: Context, promise: Promise<unknown>): void {
 interface UsageInfo {
   input: number;
   output: number;
+  cacheRead: number;
+  cacheCreation: number;
 }
 
 // deno-lint-ignore no-explicit-any
 function extractUsageFromJson(json: any): UsageInfo | null {
   // Anthropic Messages: { usage: { input_tokens, output_tokens } }
   if (json?.usage?.input_tokens != null) {
-    return { input: json.usage.input_tokens + (json.usage.cache_read_input_tokens ?? 0) + (json.usage.cache_creation_input_tokens ?? 0), output: json.usage.output_tokens ?? 0 };
+    const cacheRead = json.usage.cache_read_input_tokens ?? 0;
+    const cacheCreation = json.usage.cache_creation_input_tokens ?? 0;
+    return { input: json.usage.input_tokens + cacheRead + cacheCreation, output: json.usage.output_tokens ?? 0, cacheRead, cacheCreation };
   }
   // OpenAI Chat Completions: { usage: { prompt_tokens, completion_tokens } }
   if (json?.usage?.prompt_tokens != null) {
-    return { input: json.usage.prompt_tokens, output: json.usage.completion_tokens ?? 0 };
+    const cacheRead = json.usage.prompt_tokens_details?.cached_tokens ?? 0;
+    return { input: json.usage.prompt_tokens, output: json.usage.completion_tokens ?? 0, cacheRead, cacheCreation: 0 };
   }
   return null;
 }
 
 // deno-lint-ignore no-explicit-any
-function extractUsageFromStreamEvent(parsed: any, gotInputFromStart: boolean, add: (input: number, output: number, fromStart: boolean) => void): void {
+function extractUsageFromStreamEvent(parsed: any, gotInputFromStart: boolean, add: (input: number, output: number, fromStart: boolean, cacheRead?: number, cacheCreation?: number) => void): void {
   // Anthropic message_start: { message: { usage: { input_tokens } } }
   if (parsed.type === "message_start" && parsed.message?.usage) {
     const u = parsed.message.usage;
-    const inputFromStart = (u.input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0);
+    const cacheRead = u.cache_read_input_tokens ?? 0;
+    const cacheCreation = u.cache_creation_input_tokens ?? 0;
+    const inputFromStart = (u.input_tokens ?? 0) + cacheRead + cacheCreation;
     if (inputFromStart > 0) {
-      add(inputFromStart, 0, true);
+      add(inputFromStart, 0, true, cacheRead, cacheCreation);
     }
   }
   // Anthropic message_delta: { usage: { output_tokens, input_tokens? } }
@@ -174,18 +187,24 @@ function extractUsageFromStreamEvent(parsed: any, gotInputFromStart: boolean, ad
   // from message_delta when message_start didn't already provide them.
   if (parsed.type === "message_delta" && parsed.usage?.output_tokens != null) {
     let deltaInput = 0;
+    let deltaCR = 0;
+    let deltaCC = 0;
     if (!gotInputFromStart && parsed.usage.input_tokens != null) {
-      deltaInput = (parsed.usage.input_tokens ?? 0) + (parsed.usage.cache_read_input_tokens ?? 0) + (parsed.usage.cache_creation_input_tokens ?? 0);
+      deltaCR = parsed.usage.cache_read_input_tokens ?? 0;
+      deltaCC = parsed.usage.cache_creation_input_tokens ?? 0;
+      deltaInput = (parsed.usage.input_tokens ?? 0) + deltaCR + deltaCC;
     }
-    add(deltaInput, parsed.usage.output_tokens, false);
+    add(deltaInput, parsed.usage.output_tokens, false, deltaCR, deltaCC);
   }
   // Responses response.completed: { response: { usage: { input_tokens, output_tokens } } }
   if (parsed.type === "response.completed" && parsed.response?.usage) {
     const u = parsed.response.usage;
-    add(u.input_tokens ?? 0, u.output_tokens ?? 0, false);
+    const cacheRead = u.input_tokens_details?.cached_tokens ?? 0;
+    add(u.input_tokens ?? 0, u.output_tokens ?? 0, false, cacheRead, 0);
   }
   // OpenAI Chat Completions chunk with usage
   if (parsed.usage?.prompt_tokens != null) {
-    add(parsed.usage.prompt_tokens, parsed.usage.completion_tokens ?? 0, false);
+    const cacheRead = parsed.usage.prompt_tokens_details?.cached_tokens ?? 0;
+    add(parsed.usage.prompt_tokens, parsed.usage.completion_tokens ?? 0, false, cacheRead, 0);
   }
 }
