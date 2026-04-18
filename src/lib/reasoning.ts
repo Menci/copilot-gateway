@@ -1,9 +1,25 @@
 import type { AnthropicMessagesPayload } from "./anthropic-types.ts";
 import type { ResponsesPayload } from "./responses-types.ts";
 
+export type AnthropicOutputConfigEffort = NonNullable<
+  NonNullable<AnthropicMessagesPayload["output_config"]>["effort"]
+>;
+
 export type ResponsesReasoningEffort = NonNullable<
   NonNullable<ResponsesPayload["reasoning"]>["effort"]
 >;
+
+type ComparableReasoningEffort =
+  | AnthropicOutputConfigEffort
+  | ResponsesReasoningEffort;
+
+export const ANTHROPIC_OUTPUT_CONFIG_EFFORTS = [
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+] as const satisfies readonly AnthropicOutputConfigEffort[];
 
 export const RESPONSES_REASONING_EFFORTS = [
   "none",
@@ -14,13 +30,14 @@ export const RESPONSES_REASONING_EFFORTS = [
   "xhigh",
 ] as const satisfies readonly ResponsesReasoningEffort[];
 
-const REASONING_RANK: Record<ResponsesReasoningEffort, number> = {
+const REASONING_RANK: Record<ComparableReasoningEffort, number> = {
   none: 0,
   minimal: 1,
   low: 2,
   medium: 3,
   high: 4,
   xhigh: 5,
+  max: 6,
 };
 
 export function mapThinkingBudgetToReasoningEffort(
@@ -38,7 +55,10 @@ export function getAnthropicRequestedReasoningEffort(
   if (payload.output_config?.effort) {
     const effort = payload.output_config.effort;
     if (effort === "max") return "high";
-    if (effort === "low" || effort === "medium" || effort === "high") {
+    if (
+      effort === "low" || effort === "medium" || effort === "high" ||
+      effort === "xhigh"
+    ) {
       return effort;
     }
   }
@@ -56,6 +76,20 @@ export function pickSupportedReasoningEffort(
   requested: ResponsesReasoningEffort | null,
   supported: readonly ResponsesReasoningEffort[],
 ): ResponsesReasoningEffort | null {
+  return pickSupportedComparableEffort(requested, supported);
+}
+
+export function pickSupportedAnthropicOutputConfigEffort(
+  requested: AnthropicOutputConfigEffort | null,
+  supported: readonly AnthropicOutputConfigEffort[],
+): AnthropicOutputConfigEffort | null {
+  return pickSupportedComparableEffort(requested, supported);
+}
+
+function pickSupportedComparableEffort<T extends ComparableReasoningEffort>(
+  requested: T | null,
+  supported: readonly T[],
+): T | null {
   if (!requested || supported.length === 0) return null;
   if (supported.includes(requested)) return requested;
 
@@ -76,6 +110,15 @@ export function isResponsesReasoningEffort(
 ): value is ResponsesReasoningEffort {
   return typeof value === "string" &&
     RESPONSES_REASONING_EFFORTS.includes(value as ResponsesReasoningEffort);
+}
+
+export function isAnthropicOutputConfigEffort(
+  value: unknown,
+): value is AnthropicOutputConfigEffort {
+  return typeof value === "string" &&
+    ANTHROPIC_OUTPUT_CONFIG_EFFORTS.includes(
+      value as AnthropicOutputConfigEffort,
+    );
 }
 
 export function makeResponsesReasoningId(index: number): string {
