@@ -1,0 +1,58 @@
+# docker-compose for copilot-gateway canary deployments.
+# IMPORTANT: this file does NOT touch the production systemd service on :8000.
+# Canary lives on :8001 with its own data volume.
+
+services:
+  # ---- Canary: short-lived, isolated, used for verifying a new image ----
+  cpg-canary:
+    image: copilot-gateway:${CPG_TAG:-dev}
+    container_name: cpg-canary
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8001:8000"
+    env_file:
+      - .env.docker
+    environment:
+      KV_PATH: /data/kv.sqlite3
+      PORT: "8000"
+    volumes:
+      - cpg-canary-data:/data
+    mem_limit: 256m
+    cpus: 0.5
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null --server-response http://127.0.0.1:8000/health 2>&1 | grep -E 'HTTP/.* (200|401)' >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+  # ---- Prod (DISABLED for now). Production runs under systemd on :8000.
+  # Uncomment + flip systemd off when we're ready to switch traffic.
+  # cpg-prod:
+  #   image: copilot-gateway:${CPG_PROD_TAG:-stable}
+  #   container_name: cpg-prod
+  #   ports:
+  #     - "8000:8000"
+  #   env_file:
+  #     - .env.docker
+  #   environment:
+  #     KV_PATH: /data/kv.sqlite3
+  #   volumes:
+  #     - cpg-prod-data:/data
+  #   mem_limit: 256m
+  #   cpus: 1.0
+  #   restart: unless-stopped
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "wget -q -O /dev/null --server-response http://127.0.0.1:8000/health 2>&1 | grep -E 'HTTP/.* (200|401)' >/dev/null || exit 1"]
+  #     interval: 10s
+  #     timeout: 3s
+  #     retries: 5
+
+volumes:
+  cpg-canary-data:
+    name: cpg-canary-data
+  # cpg-prod-data:
+  #   name: cpg-prod-data

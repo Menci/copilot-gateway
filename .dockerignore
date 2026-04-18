@@ -1,0 +1,40 @@
+# Build context exclusions for the Docker image.
+# Keep image small + don't leak secrets/runtime data.
+
+.git
+.gitignore
+.github
+.claude
+.wrangler
+.vscode
+.idea
+
+# Runtime / dev junk
+node_modules
+logs
+.canary-data
+*.log
+*.kv.sqlite3
+*.kv.sqlite3.bak
+*.sqlite3-shm
+*.sqlite3-wal
+
+# Secrets — never bake into image
+.secrets
+.env
+.env.*
+!.env.docker.example
+
+# Cloudflare worker stuff (separate target)
+wrangler.jsonc
+entry-cloudflare.ts
+
+# Docs (image doesn't need them); README kept as the one exception
+*.md
+!README.md
+
+# Build artifacts
+Dockerfile
+docker-compose.yml
+.dockerignore
+scripts
