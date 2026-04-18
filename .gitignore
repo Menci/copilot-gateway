@@ -1,3 +1,7 @@
 .claude/
 .wrangler/
 node_modules/
+.canary-data/
+.env.docker
+.env.docker.local
+*.kv.sqlite3.bak
