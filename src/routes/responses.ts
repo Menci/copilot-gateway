@@ -251,6 +251,7 @@ async function handleDirectResponses(
   let resp = await fetchResponses();
 
   if (!resp.ok) {
+    const respForProxy = resp.clone();
     const body = await resp.json().catch(() => null);
     if (body && isConnectionMismatchError(body)) {
       const base64Ids = collectBase64Ids(payload);
@@ -267,7 +268,7 @@ async function handleDirectResponses(
     } else if (body) {
       return c.json(body, resp.status as 400);
     } else {
-      return proxyJsonResponse(resp);
+      return proxyJsonResponse(respForProxy);
     }
   }
 
