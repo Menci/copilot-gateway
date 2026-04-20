@@ -103,6 +103,7 @@ export function dashboardAssets() {
     return {
       authKey: '',
       isAdmin,
+      loginKeyId: localStorage.getItem('login_key_id') || '',
       tab: initTab,
       meLoaded: false,
       githubAccounts: [],
@@ -676,7 +677,9 @@ export function dashboardAssets() {
               }
               const start = rangeStart.toISOString().slice(0, 13);
               const end = new Date(now.getTime() + 3600000).toISOString().slice(0, 13);
-              const resp = await fetch('/api/token-usage?start=' + encodeURIComponent(start) + '&end=' + encodeURIComponent(end), { headers: this.authHeaders() });
+              let tokenUrl = '/api/token-usage?start=' + encodeURIComponent(start) + '&end=' + encodeURIComponent(end);
+              if (!this.isAdmin && this.loginKeyId) tokenUrl += '&key_id=' + encodeURIComponent(this.loginKeyId);
+              const resp = await fetch(tokenUrl, { headers: this.authHeaders() });
               if (resp.status === 401) {
                 this.logout();
                 return;
