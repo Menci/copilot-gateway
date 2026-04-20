@@ -25,26 +25,6 @@ export function anthropicApiErrorResponse(
   );
 }
 
-export function copilotApiErrorResponse(
-  c: Context,
-  status: ProxyErrorStatus,
-  text: string,
-): Response {
-  return apiErrorResponse(c, `Copilot API error: ${status} ${text}`, status);
-}
-
-export function anthropicCopilotApiErrorResponse(
-  c: Context,
-  status: ProxyErrorStatus,
-  text: string,
-): Response {
-  return anthropicApiErrorResponse(
-    c,
-    `Copilot API error: ${status} ${text}`,
-    status,
-  );
-}
-
 export function noUpstreamBodyApiErrorResponse(c: Context): Response {
   return apiErrorResponse(c, "No response body from upstream", 502);
 }

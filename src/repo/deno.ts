@@ -276,8 +276,8 @@ class DenoKvCacheRepo implements CacheRepo {
     return entry.value;
   }
 
-  async set(key: string, value: string): Promise<void> {
-    await this.kv.set(["cache", key], value);
+  async set(key: string, value: string, ttlMs?: number): Promise<void> {
+    await this.kv.set(["cache", key], value, ttlMs ? { expireIn: ttlMs } : undefined);
   }
 
   async delete(key: string): Promise<void> {

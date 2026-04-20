@@ -225,7 +225,9 @@ export function dashboardAssets() {
           //   1. getContextWindowForModel() returns 1_000_000 (src/utils/context.ts)
           //   2. "context-1m-2025-08-07" beta header is added (src/utils/betas.ts)
           //      (the gateway filters this out — Copilot API doesn't support it)
+          const force1m = ['claude-opus-4-7'];
           const addCtx = (id) => {
+            if (force1m.includes(id)) return id + '[1m]';
             const p = this.claudeContextMap[id];
             return p >= 1000000 ? id + '[1m]' : id;
           };
@@ -325,7 +327,10 @@ export function dashboardAssets() {
               return;
             }
             const { data: rawData } = await resp.json();
-            const data = rawData.map((m) => ({ ...m, id: substituteModelName(m.id) }));
+            const seen = new Set();
+            const data = rawData
+              .map((m) => ({ ...m, id: substituteModelName(m.id) }))
+              .filter((m) => !seen.has(m.id) && seen.add(m.id));
 
             this.allModels = data.sort((a, b) => a.id.localeCompare(b.id));
             if (!this.chatModelId && this.allModels.length > 0) {

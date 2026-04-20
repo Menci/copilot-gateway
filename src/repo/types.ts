@@ -69,7 +69,7 @@ export interface UsageRepo {
 
 export interface CacheRepo {
   get(key: string): Promise<string | null>;
-  set(key: string, value: string): Promise<void>;
+  set(key: string, value: string, ttlMs?: number): Promise<void>;
   delete(key: string): Promise<void>;
 }
 

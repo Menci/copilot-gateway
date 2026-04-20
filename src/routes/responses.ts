@@ -22,10 +22,83 @@ import {
 } from "../lib/sse-reassemble.ts";
 import {
   apiErrorResponse,
-  copilotApiErrorResponse,
   getErrorMessage,
   noUpstreamBodyApiErrorResponse,
+  proxyJsonResponse,
 } from "./proxy-utils.ts";
+import { getRepo } from "../repo/mod.ts";
+
+const SPOTTED_ID_PREFIX = "spotted_invalid_id:";
+const SPOTTED_ID_TTL_MS = 3600_000; // 1 hour
+
+function isBase64Id(id: string): boolean {
+  if (id.length < 20) return false;
+  try {
+    atob(id);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function generateReplacementId(type: string): string {
+  const rand = crypto.randomUUID().replace(/-/g, "").slice(0, 16);
+  const prefix = type === "reasoning" ? "rs" : type === "function_call" ? "fc" : "msg";
+  return `${prefix}_${rand}`;
+}
+
+async function markIdsAsInvalid(ids: string[]): Promise<void> {
+  const cache = getRepo().cache;
+  await Promise.all(ids.map((id) =>
+    cache.set(`${SPOTTED_ID_PREFIX}${id}`, "1", SPOTTED_ID_TTL_MS)
+  ));
+}
+
+async function replaceSpottedIds(payload: ResponsesPayload): Promise<boolean> {
+  const input = payload.input;
+  if (!Array.isArray(input)) return false;
+
+  // deno-lint-ignore no-explicit-any
+  const itemsWithId = input.filter((it: any) => typeof it.id === "string" && it.id);
+  if (itemsWithId.length === 0) return false;
+
+  const cache = getRepo().cache;
+  // deno-lint-ignore no-explicit-any
+  const results = await Promise.all(itemsWithId.map((it: any) =>
+    cache.get(`${SPOTTED_ID_PREFIX}${it.id}`)
+  ));
+
+  let replaced = false;
+  for (let i = 0; i < itemsWithId.length; i++) {
+    if (results[i] !== null) {
+      // deno-lint-ignore no-explicit-any
+      const it = itemsWithId[i] as any;
+      it.id = generateReplacementId(it.type ?? "message");
+      replaced = true;
+    }
+  }
+  return replaced;
+}
+
+function collectBase64Ids(payload: ResponsesPayload): string[] {
+  const input = payload.input;
+  if (!Array.isArray(input)) return [];
+  const ids: string[] = [];
+  for (const item of input) {
+    // deno-lint-ignore no-explicit-any
+    const it = item as any;
+    if (typeof it.id === "string" && isBase64Id(it.id)) {
+      ids.push(it.id);
+    }
+  }
+  return ids;
+}
+
+function isConnectionMismatchError(body: unknown): boolean {
+  // deno-lint-ignore no-explicit-any
+  const msg = (body as any)?.error?.message;
+  return typeof msg === "string" && msg.includes("input item ID does not belong to this connection");
+}
 
 function hasVision(payload: ResponsesPayload): boolean {
   const input = payload.input;
@@ -162,13 +235,12 @@ async function handleDirectResponses(
   accountType: string,
 ): Promise<Response> {
   fixApplyPatchTools(payload);
+  await replaceSpottedIds(payload);
 
   const wantsStream = payload.stream === true;
-
-  // Always stream upstream to avoid blocking on large responses
   payload.stream = true;
 
-  const resp = await copilotFetch(
+  const fetchResponses = () => copilotFetch(
     "/responses",
     { method: "POST", body: JSON.stringify(payload) },
     githubToken,
@@ -176,13 +248,28 @@ async function handleDirectResponses(
     { vision: hasVision(payload), initiator: getInitiator(payload) },
   );
 
+  let resp = await fetchResponses();
+
   if (!resp.ok) {
-    const text = await resp.text();
-    return copilotApiErrorResponse(
-      c,
-      resp.status as 400 | 401 | 403 | 404 | 429 | 500 | 502 | 503,
-      text,
-    );
+    const respForProxy = resp.clone();
+    const body = await resp.json().catch(() => null);
+    if (body && isConnectionMismatchError(body)) {
+      const base64Ids = collectBase64Ids(payload);
+      if (base64Ids.length > 0) {
+        await markIdsAsInvalid(base64Ids);
+        await replaceSpottedIds(payload);
+        resp = await fetchResponses();
+        if (!resp.ok) {
+          return proxyJsonResponse(resp);
+        }
+      } else {
+        return c.json(body, resp.status as 400);
+      }
+    } else if (body) {
+      return c.json(body, resp.status as 400);
+    } else {
+      return proxyJsonResponse(respForProxy);
+    }
   }
 
   if (!wantsStream) {
@@ -229,12 +316,7 @@ async function handleViaMessages(
   );
 
   if (!resp.ok) {
-    const text = await resp.text();
-    return copilotApiErrorResponse(
-      c,
-      resp.status as 400 | 401 | 403 | 404 | 429 | 500 | 502 | 503,
-      text,
-    );
+    return proxyJsonResponse(resp);
   }
 
   if (!wantsStream) {

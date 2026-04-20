@@ -181,8 +181,11 @@ class MemoryCacheRepo implements CacheRepo {
     return Promise.resolve(this.store.get(key) ?? null);
   }
 
-  set(key: string, value: string): Promise<void> {
+  set(key: string, value: string, ttlMs?: number): Promise<void> {
     this.store.set(key, value);
+    if (ttlMs) {
+      setTimeout(() => this.store.delete(key), ttlMs);
+    }
     return Promise.resolve();
   }
 

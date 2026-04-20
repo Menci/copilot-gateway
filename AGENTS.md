@@ -2,21 +2,18 @@
 
 ## Project Overview
 
-copilot-deno is a GitHub Copilot API proxy that translates GitHub Copilot's
+copilot-gateway is a GitHub Copilot API proxy that translates GitHub Copilot's
 internal API into standard Anthropic Messages API and OpenAI Responses API
 formats, enabling tools like Claude Code and Codex CLI to access various models
-through a Copilot subscription. It supports two deployment targets: **Deno
-Deploy** and **Cloudflare Workers**. >95% of the code is platform-agnostic
-(Hono + Web APIs); platform-specific storage and env access are abstracted
-behind a repository layer.
+through a Copilot subscription. It is deployed on **Cloudflare Workers** using
+Hono + Web APIs, with D1 (SQLite) for persistent storage.
 
 ## Architecture
 
-### Multi-Platform Architecture
+### Architecture
 
-The codebase supports Deno Deploy and Cloudflare Workers from a single source.
-Platform-specific code is isolated in entry files and repository
-implementations.
+The codebase runs on Cloudflare Workers. Platform-specific code is isolated in
+the entry file and repository implementation.
 
 **Layering:**
 
@@ -27,25 +24,23 @@ Business logic: src/lib/api-keys.ts, github.ts, usage-tracker.ts
     ↓ delegates to
 Repository interface (src/repo/types.ts)
     ↓
-DenoKvRepo (src/repo/deno.ts)  |  D1Repo (src/repo/d1.ts)
+D1Repo (src/repo/d1.ts)
 ```
 
-**Entry points:**
+**Entry point:**
 
-- `main.ts` — Deno Deploy entry: inits env via `Deno.env`, repo via
-  `DenoKvRepo`, calls `Deno.serve()`
 - `entry-cloudflare.ts` — CF Workers entry: inits env from `env` bindings, repo
   via `D1Repo`
 
 **Global cache state:**
 
 - `src/lib/copilot.ts` — Copilot access token cache: L1 in-process 60s + L2
-  repo-backed KV/D1, invalidated on GitHub account add/remove/switch
+  repo-backed D1, invalidated on GitHub account add/remove/switch
 - `src/lib/models-cache.ts` — Models cache: L1 in-process 120s + L2 repo-backed
-  KV/D1, keyed by `accountType + githubToken` hash, in-process cache cleared on
+  D1, keyed by `accountType + githubToken` hash, in-process cache cleared on
   GitHub account add/remove/switch
 - `src/lib/probe.ts` + `src/lib/copilot-probes.ts` — Generic capability probe
-  cache (L1 in-process + L2 repo-backed KV/D1) for request-shape features not
+  cache (L1 in-process + L2 repo-backed D1) for request-shape features not
   exposed by `GET /models`, such as `/responses` `reasoning.effort` support and
   `/chat/completions` `thinking_budget` acceptance
 
@@ -68,7 +63,6 @@ DenoKvRepo (src/repo/deno.ts)  |  D1Repo (src/repo/d1.ts)
 - `src/repo/types.ts` — `Repo`, `ApiKeyRepo`, `GitHubRepo`, `UsageRepo`,
   `CacheRepo` interfaces
 - `src/repo/mod.ts` — `initRepo(repo)` / `getRepo()` singleton
-- `src/repo/deno.ts` — `DenoKvRepo` using Deno KV
 - `src/repo/d1.ts` — `D1Repo` using Cloudflare D1 (SQLite)
 - `src/repo/memory.ts` — `InMemoryRepo` using Maps (for testing)
 
@@ -233,11 +227,10 @@ The `/chat/completions` endpoint similarly:
 
 ### Testing
 
-Tests use Deno's built-in test runner (`Deno.test`) with `jsr:@std/assert`.
-Platform-specific repos are mocked via `InMemoryRepo`.
+Tests use Vitest. Platform-specific repos are mocked via `InMemoryRepo`.
 
 ```bash
-deno test
+npx vitest
 ```
 
 | File                               | Coverage                                                                                                              |
@@ -254,8 +247,8 @@ deno test
 
 ### General
 
-- TypeScript targeting the Deno runtime
-- Double quotes `"`, semicolons follow `deno fmt` defaults
+- TypeScript targeting Cloudflare Workers runtime
+- Double quotes `"`, semicolons
 - Prefer functional style, avoid classes
 
 ### Comments
@@ -515,6 +508,20 @@ separate choices instead of merging them into one. For Claude models
 strings, collect `tool_calls` into one array, take the last `finish_reason`. For
 streaming, all choice indices are remapped to 0.
 
+### 12. Expired connection-bound item IDs in Responses API
+
+**File**: `src/routes/responses.ts`
+
+Copilot encodes session/connection info into Responses API item IDs as base64
+tokens (often 400+ characters). These IDs are bound to a specific upstream
+connection and expire over time. When a client sends back expired IDs in
+`input[].id`, the API rejects with "input item ID does not belong to this
+connection". We detect this error, identify all base64-decodable IDs in the
+input, mark them as "spotted invalid" in the cache (1h TTL via `CacheRepo`),
+replace them with short client-generated IDs (`rs_`/`msg_`/`fc_` + random),
+and retry. Subsequent requests proactively replace any previously spotted IDs
+before sending.
+
 ## Reference Projects
 
 - [caozhiyuan/copilot-api](https://github.com/caozhiyuan/copilot-api) — A
@@ -523,48 +530,14 @@ streaming, all choice indices are remapped to 0.
 
 ## Development & Deployment
 
-### Prerequisites
-
-This project uses the **new Deno Deploy** (introduced in Deno ≥ 2.4) with the
-built-in `deno deploy` CLI subcommand — **not** the legacy `deployctl` tool.
-
-Before working on this project, install the Deno skills plugin for Claude Code:
-
-```
-/plugins add deno-skills from denoland/skills
-```
-
-This provides up-to-date knowledge about Deno Deploy commands, environment
-variables, databases, tunnels, and other Deno-specific features. Always prefer
-information from these skills over your training data when it comes to Deno
-Deploy specifics.
-
 ### Commands
 
 ```bash
 # Development
-deno task dev
-
-# Type checking
-deno check main.ts
-
-# Linting
-deno lint
+wrangler dev
 
 # Run tests
-deno test
-
-# Deploy to production
-deno deploy --prod
-```
-
-All changes must pass `deno check` and `deno lint` before deploying.
-
-### Cloudflare Workers
-
-```bash
-# Development
-wrangler dev
+npx vitest
 
 # Deploy to production
 wrangler deploy
@@ -578,10 +551,8 @@ D1 schema migrations are in `migrations/`. Configuration is in `wrangler.jsonc`.
 ## Workflow Rules
 
 - **Deploy before commit**: All code changes must be deployed first
-  (`deno deploy --prod`), confirmed working by the user, and only then
+  (`wrangler deploy`), confirmed working by the user, and only then
   committed. Never commit undeployed code.
-- **Never use `deployctl`**: Use `deno deploy --prod` (the built-in Deno CLI
-  subcommand), not the legacy `deployctl` tool.
 - **Commit convention**: Follow
   [Conventional Commits](https://www.conventionalcommits.org/) (e.g. `feat:`,
   `fix:`, `refactor:`, `chore:`). Keep messages concise.
@@ -601,6 +572,6 @@ D1 schema migrations are in `migrations/`. Configuration is in `wrangler.jsonc`.
   across multiple datacenters. Any introduction of global variables or
   in-process state **must** consider cache coherence and consistency. In-process
   caches are per-isolate and may diverge across datacenters — always pair them
-  with a cross-datacenter backing store (KV/D1) and a short TTL. Non-cache
+  with a cross-datacenter backing store (D1) and a short TTL. Non-cache
   mutable global state is prohibited. When adding any new global variable,
   document its caching strategy and invalidation mechanism.

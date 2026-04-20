@@ -8,5 +8,5 @@
 /** Canonical upstream form — for calls into Copilot. */
 export function normalizeModelName(id: string): string {
   if (!id.startsWith("claude-")) return id;
-  return id.replace(/(\d)-(\d)/g, "$1.$2");
+  return id.replace(/(?<=-)(\d+)-(\d+)(?=-|$)/g, "$1.$2");
 }
