@@ -93,26 +93,61 @@ function isContextWindowError(text: string): boolean {
     text.includes("context_length_exceeded");
 }
 
-/** Copilot rejects requests containing this string in system prompts */
-const RESERVED_KEYWORD = "x-anthropic-billing-header";
+/**
+ * Strip the entire billing attribution line from Claude Code.
+ *
+ * Claude Code's native binary injects a billing header into the system prompt:
+ *   x-anthropic-billing-header: cc_version=2.1.114; cc_entrypoint=cli; cch=<hash>
+ *
+ * The `cch=` hash changes with EVERY request (it's a hash of the request body),
+ * which means the system prompt content changes every turn, completely invalidating
+ * the prompt cache. The previous code only stripped the keyword itself, leaving
+ * the varying hash in the text.
+ *
+ * This regex removes the entire line (keyword + all parameters including the hash).
+ * We also strip any orphaned `cch=<hex>` patterns that the native binary's memmem
+ * might have injected into message content instead of the billing header.
+ */
+const BILLING_HEADER_LINE_RE =
+  /x-anthropic-billing-header[^\n]*/g;
+const CCH_HASH_RE = /cch=[0-9a-f]{5,};?/gi;
+
+function stripBillingAttribution(text: string): string {
+  let result = text
+    .replace(BILLING_HEADER_LINE_RE, "")
+    .replace(CCH_HASH_RE, "")
+    .trim();
+  // Never return empty — Anthropic API rejects empty text content blocks
+  return result || " ";
+}
 
 function stripReservedKeywords(payload: AnthropicMessagesPayload): void {
   if (typeof payload.system === "string") {
-    payload.system = payload.system.replaceAll(RESERVED_KEYWORD, "");
+    payload.system = stripBillingAttribution(payload.system);
   } else if (Array.isArray(payload.system)) {
     for (const block of payload.system) {
-      block.text = block.text.replaceAll(RESERVED_KEYWORD, "");
+      block.text = stripBillingAttribution(block.text);
+    }
+    // Remove blocks that are now effectively empty (only whitespace)
+    payload.system = payload.system.filter((b) => b.text.trim().length > 0);
+    // If all system blocks were removed, drop system entirely
+    if (payload.system.length === 0) {
+      delete (payload as Record<string, unknown>).system;
     }
   }
   for (const msg of payload.messages) {
     if (typeof msg.content === "string") {
-      msg.content = msg.content.replaceAll(RESERVED_KEYWORD, "");
+      msg.content = stripBillingAttribution(msg.content);
     } else if (Array.isArray(msg.content)) {
       for (const block of msg.content) {
         if ("text" in block && typeof block.text === "string") {
-          block.text = block.text.replaceAll(RESERVED_KEYWORD, "");
+          block.text = stripBillingAttribution(block.text);
         }
       }
+      // Remove empty text blocks from message content
+      msg.content = msg.content.filter(
+        (b) => !("text" in b && typeof (b as { text: string }).text === "string" && (b as { text: string }).text.trim().length === 0),
+      );
     }
   }
 }

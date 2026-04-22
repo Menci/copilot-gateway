@@ -992,3 +992,206 @@ Deno.test("/v1/messages drops reasoning config when the responses endpoint suppo
   assertFalse("reasoning" in upstreamBody!);
   assertFalse("include" in upstreamBody!);
 });
+
+// ── Billing attribution stripping tests ──
+
+Deno.test("stripReservedKeywords removes entire billing header line from string system", async () => {
+  const { apiKey } = await setupAppTest();
+
+  let upstreamBody: Record<string, unknown> | undefined;
+
+  await withMockedFetch(async (request) => {
+    const url = new URL(request.url);
+    if (url.hostname === "update.code.visualstudio.com") return jsonResponse(["1.110.1"]);
+    if (url.pathname === "/copilot_internal/v2/token") {
+      return jsonResponse({ token: "tok", expires_at: 4102444800, refresh_in: 3600 });
+    }
+    if (url.pathname === "/models") {
+      return jsonResponse(copilotModels([{ id: "claude-native", supported_endpoints: ["/v1/messages"] }]));
+    }
+    if (url.pathname === "/v1/messages") {
+      upstreamBody = JSON.parse(await request.text());
+      return sseResponse([
+        { event: "message_start", data: { type: "message_start", message: { id: "msg_1", type: "message", role: "assistant", content: [], model: "claude-native", stop_reason: null, stop_sequence: null, usage: { input_tokens: 10, output_tokens: 0 } } } },
+        { event: "content_block_start", data: { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } } },
+        { event: "content_block_delta", data: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "ok" } } },
+        { event: "content_block_stop", data: { type: "content_block_stop", index: 0 } },
+        { event: "message_delta", data: { type: "message_delta", delta: { stop_reason: "end_turn", stop_sequence: null }, usage: { output_tokens: 1 } } },
+        { event: "message_stop", data: { type: "message_stop" } },
+      ]);
+    }
+    throw new Error(`Unhandled fetch ${request.url}`);
+  }, async () => {
+    const response = await requestApp("/v1/messages", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-api-key": apiKey.key },
+      body: JSON.stringify({
+        model: "claude-native",
+        max_tokens: 10,
+        stream: false,
+        system: "You are helpful.\nx-anthropic-billing-header: cc_version=2.1.114; cc_entrypoint=cli; cch=abcde12345;\nBe concise.",
+        messages: [{ role: "user", content: "Hi" }],
+      }),
+    });
+    assertEquals(response.status, 200);
+  });
+
+  assertExists(upstreamBody);
+  const sys = upstreamBody!.system as string;
+  // Billing header line is fully removed
+  assertFalse(sys.includes("x-anthropic-billing-header"));
+  assertFalse(sys.includes("cch="));
+  // Real content is preserved
+  assertEquals(sys.includes("You are helpful."), true);
+  assertEquals(sys.includes("Be concise."), true);
+});
+
+Deno.test("stripReservedKeywords removes billing-only system block without 400 error", async () => {
+  const { apiKey } = await setupAppTest();
+
+  let upstreamBody: Record<string, unknown> | undefined;
+
+  await withMockedFetch(async (request) => {
+    const url = new URL(request.url);
+    if (url.hostname === "update.code.visualstudio.com") return jsonResponse(["1.110.1"]);
+    if (url.pathname === "/copilot_internal/v2/token") {
+      return jsonResponse({ token: "tok", expires_at: 4102444800, refresh_in: 3600 });
+    }
+    if (url.pathname === "/models") {
+      return jsonResponse(copilotModels([{ id: "claude-native", supported_endpoints: ["/v1/messages"] }]));
+    }
+    if (url.pathname === "/v1/messages") {
+      upstreamBody = JSON.parse(await request.text());
+      return sseResponse([
+        { event: "message_start", data: { type: "message_start", message: { id: "msg_2", type: "message", role: "assistant", content: [], model: "claude-native", stop_reason: null, stop_sequence: null, usage: { input_tokens: 5, output_tokens: 0 } } } },
+        { event: "content_block_start", data: { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } } },
+        { event: "content_block_delta", data: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "ok" } } },
+        { event: "content_block_stop", data: { type: "content_block_stop", index: 0 } },
+        { event: "message_delta", data: { type: "message_delta", delta: { stop_reason: "end_turn", stop_sequence: null }, usage: { output_tokens: 1 } } },
+        { event: "message_stop", data: { type: "message_stop" } },
+      ]);
+    }
+    throw new Error(`Unhandled fetch ${request.url}`);
+  }, async () => {
+    // System has two blocks: one with only billing header, one with real content
+    const response = await requestApp("/v1/messages", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-api-key": apiKey.key },
+      body: JSON.stringify({
+        model: "claude-native",
+        max_tokens: 10,
+        stream: false,
+        system: [
+          { type: "text", text: "x-anthropic-billing-header: cc_version=2.1.114; cc_entrypoint=cli; cch=ff00ff00ff;" },
+          { type: "text", text: "You are a helpful assistant.", cache_control: { type: "ephemeral" } },
+        ],
+        messages: [{ role: "user", content: "Hi" }],
+      }),
+    });
+    assertEquals(response.status, 200);
+  });
+
+  assertExists(upstreamBody);
+  // Empty billing block should be removed, only the real block remains
+  const sys = upstreamBody!.system as Array<Record<string, unknown>>;
+  assertEquals(sys.length, 1);
+  assertEquals(sys[0].text, "You are a helpful assistant.");
+  assertExists(sys[0].cache_control);
+});
+
+Deno.test("stripReservedKeywords handles all-billing system blocks by removing system entirely", async () => {
+  const { apiKey } = await setupAppTest();
+
+  let upstreamBody: Record<string, unknown> | undefined;
+
+  await withMockedFetch(async (request) => {
+    const url = new URL(request.url);
+    if (url.hostname === "update.code.visualstudio.com") return jsonResponse(["1.110.1"]);
+    if (url.pathname === "/copilot_internal/v2/token") {
+      return jsonResponse({ token: "tok", expires_at: 4102444800, refresh_in: 3600 });
+    }
+    if (url.pathname === "/models") {
+      return jsonResponse(copilotModels([{ id: "claude-native", supported_endpoints: ["/v1/messages"] }]));
+    }
+    if (url.pathname === "/v1/messages") {
+      upstreamBody = JSON.parse(await request.text());
+      return sseResponse([
+        { event: "message_start", data: { type: "message_start", message: { id: "msg_3", type: "message", role: "assistant", content: [], model: "claude-native", stop_reason: null, stop_sequence: null, usage: { input_tokens: 5, output_tokens: 0 } } } },
+        { event: "content_block_start", data: { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } } },
+        { event: "content_block_delta", data: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "ok" } } },
+        { event: "content_block_stop", data: { type: "content_block_stop", index: 0 } },
+        { event: "message_delta", data: { type: "message_delta", delta: { stop_reason: "end_turn", stop_sequence: null }, usage: { output_tokens: 1 } } },
+        { event: "message_stop", data: { type: "message_stop" } },
+      ]);
+    }
+    throw new Error(`Unhandled fetch ${request.url}`);
+  }, async () => {
+    // System has only billing header blocks — should be removed entirely
+    const response = await requestApp("/v1/messages", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-api-key": apiKey.key },
+      body: JSON.stringify({
+        model: "claude-native",
+        max_tokens: 10,
+        stream: false,
+        system: [
+          { type: "text", text: "x-anthropic-billing-header: cc_version=2.1.114; cc_entrypoint=cli; cch=aabbccdd;" },
+        ],
+        messages: [{ role: "user", content: "Hi" }],
+      }),
+    });
+    assertEquals(response.status, 200);
+  });
+
+  assertExists(upstreamBody);
+  // system should be removed entirely (not present or undefined)
+  assertFalse("system" in upstreamBody!);
+});
+
+Deno.test("stripReservedKeywords strips cch= hash from message content", async () => {
+  const { apiKey } = await setupAppTest();
+
+  let upstreamBody: Record<string, unknown> | undefined;
+
+  await withMockedFetch(async (request) => {
+    const url = new URL(request.url);
+    if (url.hostname === "update.code.visualstudio.com") return jsonResponse(["1.110.1"]);
+    if (url.pathname === "/copilot_internal/v2/token") {
+      return jsonResponse({ token: "tok", expires_at: 4102444800, refresh_in: 3600 });
+    }
+    if (url.pathname === "/models") {
+      return jsonResponse(copilotModels([{ id: "claude-native", supported_endpoints: ["/v1/messages"] }]));
+    }
+    if (url.pathname === "/v1/messages") {
+      upstreamBody = JSON.parse(await request.text());
+      return sseResponse([
+        { event: "message_start", data: { type: "message_start", message: { id: "msg_4", type: "message", role: "assistant", content: [], model: "claude-native", stop_reason: null, stop_sequence: null, usage: { input_tokens: 5, output_tokens: 0 } } } },
+        { event: "content_block_start", data: { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } } },
+        { event: "content_block_delta", data: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "ok" } } },
+        { event: "content_block_stop", data: { type: "content_block_stop", index: 0 } },
+        { event: "message_delta", data: { type: "message_delta", delta: { stop_reason: "end_turn", stop_sequence: null }, usage: { output_tokens: 1 } } },
+        { event: "message_stop", data: { type: "message_stop" } },
+      ]);
+    }
+    throw new Error(`Unhandled fetch ${request.url}`);
+  }, async () => {
+    const response = await requestApp("/v1/messages", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-api-key": apiKey.key },
+      body: JSON.stringify({
+        model: "claude-native",
+        max_tokens: 10,
+        stream: false,
+        messages: [{ role: "user", content: "Hello cch=abcdef12345; world" }],
+      }),
+    });
+    assertEquals(response.status, 200);
+  });
+
+  assertExists(upstreamBody);
+  const msgs = upstreamBody!.messages as Array<Record<string, unknown>>;
+  const content = msgs[0].content as string;
+  assertFalse(content.includes("cch="));
+  assertEquals(content.includes("Hello"), true);
+  assertEquals(content.includes("world"), true);
+});
