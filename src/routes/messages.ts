@@ -93,15 +93,30 @@ function isContextWindowError(text: string): boolean {
     text.includes("context_length_exceeded");
 }
 
-/** Copilot rejects requests containing this string in system prompts */
-const RESERVED_KEYWORD = "x-anthropic-billing-header";
+// Strip entire billing attribution line + orphaned cch= hashes to restore prompt cache
+const BILLING_HEADER_LINE_RE = /x-anthropic-billing-header[^\n]*/g;
+const CCH_HASH_RE = /cch=[0-9a-f]{5,};?/gi;
+
+function stripBillingAttribution(text: string): string {
+  return text
+    .replace(BILLING_HEADER_LINE_RE, "")
+    .replace(CCH_HASH_RE, "")
+    .trim();
+}
 
 function stripReservedKeywords(payload: AnthropicMessagesPayload): void {
   if (typeof payload.system === "string") {
-    payload.system = payload.system.replaceAll(RESERVED_KEYWORD, "");
+    payload.system = stripBillingAttribution(payload.system);
+    if (!payload.system) {
+      payload.system = undefined;
+    }
   } else if (Array.isArray(payload.system)) {
     for (const block of payload.system) {
-      block.text = block.text.replaceAll(RESERVED_KEYWORD, "");
+      block.text = stripBillingAttribution(block.text);
+    }
+    payload.system = payload.system.filter((b) => b.text.length > 0);
+    if (payload.system.length === 0) {
+      payload.system = undefined;
     }
   }
 }
