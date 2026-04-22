@@ -465,6 +465,131 @@ Deno.test("/v1/messages forwards Anthropic tool strict field on native messages"
   );
 });
 
+Deno.test("/v1/messages retries native requests with downgraded output_config.effort", async () => {
+  const { apiKey } = await setupAppTest();
+
+  const upstreamBodies: Array<Record<string, unknown>> = [];
+
+  await withMockedFetch(async (request) => {
+    const url = new URL(request.url);
+
+    if (url.hostname === "update.code.visualstudio.com") {
+      return jsonResponse(["1.110.1"]);
+    }
+    if (url.pathname === "/copilot_internal/v2/token") {
+      return jsonResponse({
+        token: "copilot-access-token",
+        expires_at: 4102444800,
+        refresh_in: 3600,
+      });
+    }
+    if (url.pathname === "/models") {
+      return jsonResponse(copilotModels([
+        { id: "claude-native-reasoning", supported_endpoints: ["/v1/messages"] },
+      ]));
+    }
+    if (url.pathname === "/v1/messages") {
+      const body = JSON.parse(await request.text()) as Record<string, unknown>;
+      upstreamBodies.push(body);
+
+      const outputConfig = body.output_config as Record<string, unknown> | undefined;
+      if (outputConfig?.effort === "xhigh") {
+        return jsonResponse({
+          error: {
+            message:
+              'output_config.effort "xhigh" is not supported by model claude-native-reasoning; supported values: [medium]',
+            code: "invalid_reasoning_effort",
+          },
+        }, 400);
+      }
+
+      return sseResponse([
+        {
+          event: "message_start",
+          data: {
+            type: "message_start",
+            message: {
+              id: "msg_reasoning",
+              type: "message",
+              role: "assistant",
+              content: [],
+              model: "claude-native-reasoning",
+              stop_reason: null,
+              stop_sequence: null,
+              usage: { input_tokens: 10, output_tokens: 0 },
+            },
+          },
+        },
+        {
+          event: "content_block_start",
+          data: {
+            type: "content_block_start",
+            index: 0,
+            content_block: { type: "text", text: "" },
+          },
+        },
+        {
+          event: "content_block_delta",
+          data: {
+            type: "content_block_delta",
+            index: 0,
+            delta: { type: "text_delta", text: "ok" },
+          },
+        },
+        {
+          event: "content_block_stop",
+          data: { type: "content_block_stop", index: 0 },
+        },
+        {
+          event: "message_delta",
+          data: {
+            type: "message_delta",
+            delta: { stop_reason: "end_turn", stop_sequence: null },
+            usage: { output_tokens: 4 },
+          },
+        },
+        { event: "message_stop", data: { type: "message_stop" } },
+      ]);
+    }
+
+    throw new Error(`Unhandled fetch ${request.url}`);
+  }, async () => {
+    const response = await requestApp("/v1/messages", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": apiKey.key,
+      },
+      body: JSON.stringify({
+        model: "claude-native-reasoning",
+        max_tokens: 64,
+        stream: false,
+        thinking: { type: "enabled", budget_tokens: 4096 },
+        output_config: { effort: "xhigh" },
+        messages: [{ role: "user", content: "hello" }],
+      }),
+    });
+
+    assertEquals(response.status, 200);
+    const body = await response.json();
+    assertEquals(body.id, "msg_reasoning");
+  });
+
+  assertEquals(upstreamBodies.length, 2);
+  assertEquals(
+    ((upstreamBodies[0].output_config as Record<string, unknown>).effort),
+    "xhigh",
+  );
+  assertEquals(
+    ((upstreamBodies[1].output_config as Record<string, unknown>).effort),
+    "medium",
+  );
+  assertEquals(
+    ((upstreamBodies[1].thinking as Record<string, unknown>).budget_tokens),
+    4096,
+  );
+});
+
 Deno.test("/v1/messages keeps strict Anthropic tools on native messages when both endpoints are available", async () => {
   const { apiKey } = await setupAppTest();
 

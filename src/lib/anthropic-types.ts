@@ -17,7 +17,7 @@ export interface AnthropicMessagesPayload {
     name?: string;
   };
   thinking?: { type: "enabled" | "adaptive"; budget_tokens?: number };
-  output_config?: { effort?: "low" | "medium" | "high" | "max" };
+  output_config?: { effort?: "low" | "medium" | "high" | "xhigh" | "max" };
   service_tier?: "auto" | "standard_only";
 }
 

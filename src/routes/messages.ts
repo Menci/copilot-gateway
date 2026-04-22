@@ -7,7 +7,12 @@ import {
 import { getGithubCredentials } from "../lib/github.ts";
 import { modelSupportsEndpoint } from "../lib/models-cache.ts";
 import { normalizeModelName } from "../lib/model-name.ts";
-import { getAnthropicRequestedReasoningEffort } from "../lib/reasoning.ts";
+import {
+  getAnthropicRequestedReasoningEffort,
+  isAnthropicOutputConfigEffort,
+  pickSupportedAnthropicOutputConfigEffort,
+  type AnthropicOutputConfigEffort,
+} from "../lib/reasoning.ts";
 import type {
   AnthropicMessagesPayload,
   AnthropicStreamState,
@@ -139,6 +144,67 @@ function stripCacheControlScope(payload: AnthropicMessagesPayload): void {
       for (const block of msg.content) strip(block);
     }
   }
+}
+
+function parseNativeReasoningEffortSupport(
+  text: string,
+): { supported: AnthropicOutputConfigEffort[] } | null {
+  let message = text;
+  let code: string | undefined;
+
+  try {
+    const parsed = JSON.parse(text) as {
+      error?: { message?: unknown; code?: unknown };
+    };
+    if (typeof parsed.error?.message === "string") message = parsed.error.message;
+    if (typeof parsed.error?.code === "string") code = parsed.error.code;
+  } catch {
+    // Ignore malformed upstream error payloads and fall back to string matching.
+  }
+
+  if (code !== "invalid_reasoning_effort" &&
+    !message.includes("output_config.effort")) {
+    return null;
+  }
+
+  const supportedMatch = message.match(/supported values:\s*\[([^\]]*)\]/i);
+  const supported = supportedMatch
+    ? supportedMatch[1]
+      .split(",")
+      .map((value) => value.trim().replace(/^['\"]|['\"]$/g, ""))
+      .filter(isAnthropicOutputConfigEffort)
+    : [];
+
+  return { supported };
+}
+
+function buildNativeMessagesReasoningRetryPayload(
+  payload: AnthropicMessagesPayload,
+  errorText: string,
+): AnthropicMessagesPayload | null {
+  const requested = payload.output_config?.effort;
+  if (!requested) return null;
+
+  const parsed = parseNativeReasoningEffortSupport(errorText);
+  if (!parsed) return null;
+
+  const retryEffort = pickSupportedAnthropicOutputConfigEffort(
+    requested,
+    parsed.supported,
+  );
+  if (retryEffort === requested) return null;
+
+  const retryPayload: AnthropicMessagesPayload = { ...payload };
+  if (retryEffort) {
+    retryPayload.output_config = {
+      ...(payload.output_config ?? {}),
+      effort: retryEffort,
+    };
+    return retryPayload;
+  }
+
+  delete retryPayload.output_config;
+  return retryPayload;
 }
 
 /** Anthropic-compatible error that triggers compact in Claude Code */
@@ -297,22 +363,46 @@ async function forwardMessages(
   accountType: string,
   fetchOptions: CopilotFetchOptions,
 ): Promise<Response> {
-  const { service_tier: _, ...cleanPayload } = payload;
   const wantsStream = !!payload.stream;
 
-  // Always stream upstream to avoid blocking on large responses
-  cleanPayload.stream = true;
+  const postMessages = (nextPayload: AnthropicMessagesPayload) => {
+    const { service_tier: _, ...cleanPayload } = nextPayload;
 
-  const resp = await copilotFetch(
-    "/v1/messages",
-    { method: "POST", body: JSON.stringify(cleanPayload) },
-    githubToken,
-    accountType,
-    fetchOptions,
-  );
+    // Always stream upstream to avoid blocking on large responses
+    cleanPayload.stream = true;
+
+    return copilotFetch(
+      "/v1/messages",
+      { method: "POST", body: JSON.stringify(cleanPayload) },
+      githubToken,
+      accountType,
+      fetchOptions,
+    );
+  };
+
+  let resp = await postMessages(payload);
+  let errorText: string | null = null;
 
   if (!resp.ok) {
-    const text = await resp.text();
+    errorText = await resp.text();
+    const retryPayload = buildNativeMessagesReasoningRetryPayload(
+      payload,
+      errorText,
+    );
+    if (retryPayload) {
+      console.warn(
+        "Retrying native /v1/messages with downgraded output_config.effort:",
+        payload.output_config?.effort,
+        "->",
+        retryPayload.output_config?.effort ?? "omitted",
+      );
+      resp = await postMessages(retryPayload);
+      errorText = resp.ok ? null : await resp.text();
+    }
+  }
+
+  if (!resp.ok) {
+    const text = errorText ?? await resp.text();
     if (isContextWindowError(text)) return contextWindowErrorResponse(c);
     return new Response(text, {
       status: resp.status,
