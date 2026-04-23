@@ -23,9 +23,7 @@ The Messages route selects one of three paths:
 1. Native Messages If the model supports `/v1/messages`, forward the Anthropic
    payload directly.
 2. Responses translation If the model does not support `/v1/messages`, but
-   supports `/responses` and either does not support `/chat/completions` or the
-   request asks for reasoning/thinking, translate Anthropic Messages ↔ OpenAI
-   Responses.
+   supports `/responses`, translate Anthropic Messages ↔ OpenAI Responses.
 3. Chat Completions translation Otherwise, translate Anthropic Messages ↔ OpenAI
    Chat Completions.
 
@@ -112,10 +110,9 @@ Files:
 - `src/lib/translate/responses-stream.ts`
 - `src/lib/translate/anthropic-to-responses-stream.ts`
 
-This path is used when a model supports `/responses` but not `/v1/messages`. It
-is also preferred over `/chat/completions` for non-native Anthropic requests
-that ask for reasoning/thinking, because Responses can represent that capability
-more directly.
+This path is used whenever native `/v1/messages` is unavailable and the model
+supports `/responses`. The `/chat/completions` translation path is only used for
+Messages requests when `/responses` is unavailable.
 
 Main mappings:
 

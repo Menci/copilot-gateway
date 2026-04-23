@@ -1,5 +1,4 @@
 import type { AnthropicMessagesPayload } from "../../../lib/anthropic-types.ts";
-import { getAnthropicRequestedReasoningEffort } from "../../../lib/reasoning.ts";
 import { getModelCapabilities } from "../../shared/models/get-model-capabilities.ts";
 import type { MessagesPlan } from "../../shared/types/plan.ts";
 
@@ -46,20 +45,7 @@ export const planMessagesRequest = async (
     };
   }
 
-  const requestedReasoningEffort = getAnthropicRequestedReasoningEffort(
-    payload,
-  );
-
-  if (capabilities.supportsResponses && requestedReasoningEffort) {
-    return {
-      source: "messages",
-      target: "responses",
-      wantsStream,
-      fetchOptions,
-    };
-  }
-
-  if (capabilities.supportsResponses && !capabilities.supportsChatCompletions) {
+  if (capabilities.supportsResponses) {
     return {
       source: "messages",
       target: "responses",

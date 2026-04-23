@@ -1065,7 +1065,7 @@ Deno.test("/v1/messages preserves output_config.effort max when translating to r
   assertEquals(upstreamBody!.include, ["reasoning.encrypted_content"]);
 });
 
-Deno.test("/v1/messages with disabled thinking prefers responses on dual-endpoint models", async () => {
+Deno.test("/v1/messages prefers responses on dual-endpoint models when native messages is unavailable", async () => {
   const { apiKey } = await setupAppTest();
 
   let upstreamBody: Record<string, unknown> | undefined;
@@ -1086,14 +1086,14 @@ Deno.test("/v1/messages with disabled thinking prefers responses on dual-endpoin
     if (url.pathname === "/models") {
       return jsonResponse(copilotModels([
         {
-          id: "gpt-disabled-thinking",
+          id: "gpt-dual-endpoint",
           supported_endpoints: ["/responses", "/chat/completions"],
         },
       ]));
     }
     if (url.pathname === "/chat/completions") {
       throw new Error(
-        "chat/completions should not be used for disabled thinking",
+        "chat/completions should not be used when /responses is available",
       );
     }
     if (url.pathname === "/responses") {
@@ -1107,7 +1107,7 @@ Deno.test("/v1/messages with disabled thinking prefers responses on dual-endpoin
             response: {
               id: "resp_plain",
               object: "response",
-              model: "gpt-disabled-thinking",
+              model: "gpt-dual-endpoint",
               status: "completed",
               output_text: "plain",
               output: [
@@ -1133,10 +1133,9 @@ Deno.test("/v1/messages with disabled thinking prefers responses on dual-endpoin
         "x-api-key": apiKey.key,
       },
       body: JSON.stringify({
-        model: "gpt-disabled-thinking",
+        model: "gpt-dual-endpoint",
         max_tokens: 256,
         stream: false,
-        thinking: { type: "disabled" },
         messages: [{ role: "user", content: "Hi" }],
       }),
     });
@@ -1147,10 +1146,8 @@ Deno.test("/v1/messages with disabled thinking prefers responses on dual-endpoin
   });
 
   assertExists(upstreamBody);
-  assertEquals(
-    (upstreamBody!.reasoning as Record<string, unknown>).effort,
-    "none",
-  );
+  assertFalse("reasoning" in upstreamBody!);
+  assertFalse("include" in upstreamBody!);
 });
 
 Deno.test("stripReservedKeywords removes entire billing header line from string system", async () => {

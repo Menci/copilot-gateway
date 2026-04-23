@@ -189,6 +189,9 @@ Primary proxy routes:
 2. Translated `/responses`
 3. Translated `/chat/completions`
 
+If native `/v1/messages` is unavailable, `/responses` is preferred whenever the
+model supports it.
+
 `/v1/responses` chooses among:
 
 1. Native `/responses`
