@@ -12,7 +12,7 @@ Route selection is driven by `GET /models` capability data, specifically each
 model's `supported_endpoints`. The implementation does not hardcode model
 families. When endpoint metadata is insufficient, the gateway uses cached
 runtime probes to discover request-shape capabilities such as supported
-`reasoning.effort` values and `thinking_budget` acceptance.
+`reasoning.effort` values.
 
 ## `/v1/messages` Routing
 
@@ -149,9 +149,12 @@ The Chat Completions route selects one of three paths:
    Completions ↔ Anthropic Messages (reuses the Messages translation layer).
 2. Direct passthrough If the model supports `/chat/completions`, forward the
    request directly.
-3. Responses translation If the model only supports `/responses`, or if a
-   `thinking_budget` request can be represented more safely via `/responses`,
-   translate Chat Completions ↔ Responses directly (no Anthropic intermediate).
+3. Responses translation If the model only supports `/responses`, translate Chat
+   Completions ↔ Responses directly (no Anthropic intermediate).
+
+Unknown Chat Completions fields are only preserved on native `/chat/completions`
+passthrough. Translated paths only carry fields with explicit pairwise
+mappings.
 
 ## Chat Completions ↔ Responses Translation
 
@@ -170,9 +173,6 @@ format.
 - `reasoning_text`/`reasoning_opaque` → `reasoning` input items
 - tool messages → `function_call_output` input items
 - tools → Responses `function` tools
-- `thinking_budget` → discretized `reasoning.effort`, then clamped to the
-  nearest probed supported effort for that model (or dropped if none are
-  supported)
 
 ### Responses → Chat Completions (response)
 
@@ -225,8 +225,6 @@ known and accepted trade-offs.
 - Probe results are cached in-process and in the repo-backed cache.
 - Responses reasoning support is discovered by sending minimal `/responses`
   requests for each candidate `reasoning.effort` value.
-- Chat Completions `thinking_budget` support is discovered by sending a minimal
-  `/chat/completions` request with and without `thinking_budget`.
 - A failed probe does not hardcode any model family; the request falls back to
   omitting the unsupported field for safety.
 
@@ -289,7 +287,6 @@ known and accepted trade-offs.
 | Parameter         | Behavior                                                    |
 | ----------------- | ----------------------------------------------------------- |
 | `stop`            | Dropped — no Responses API counterpart                      |
-| `thinking_budget` | Discretized to `low`/`medium`/`high` effort; precision lost |
 
 **Reasoning round-trip:**
 

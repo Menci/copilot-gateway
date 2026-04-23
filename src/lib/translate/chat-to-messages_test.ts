@@ -681,21 +681,6 @@ Deno.test("stream false → not set", async () => {
   assertEquals(result.stream, undefined);
 });
 
-Deno.test("thinking_budget → thinking config", async () => {
-  const result = await translateChatToMessages(mkPayload({
-    messages: [{ role: "user", content: "Hi" }],
-    thinking_budget: 4096,
-  }));
-  assertEquals(result.thinking, { type: "enabled", budget_tokens: 4096 });
-});
-
-Deno.test("no thinking_budget → no thinking config", async () => {
-  const result = await translateChatToMessages(mkPayload({
-    messages: [{ role: "user", content: "Hi" }],
-  }));
-  assertEquals(result.thinking, undefined);
-});
-
 // ── Tool choice mapping ──
 
 Deno.test("tool_choice auto → { type: auto }", async () => {

@@ -17,7 +17,7 @@ export interface ResponsesPayload {
   store: boolean;
   parallel_tool_calls: boolean;
   reasoning?: {
-    effort?: "low" | "medium" | "high" | "xhigh" | "none" | "minimal";
+    effort?: string;
     summary?: "detailed" | "auto" | "concise";
   };
   include?: string[];

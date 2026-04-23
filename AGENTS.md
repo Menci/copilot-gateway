@@ -234,8 +234,6 @@ Current placement:
   - retry once
 - `src/data-plane/targets/responses/interceptors/synchronize-output-item-ids.ts`
   - synchronize mismatched stream item IDs
-- `src/data-plane/targets/chat-completions/interceptors/fix-thinking-budget.ts`
-  - make final `thinking_budget` keep/drop decision
 - `src/data-plane/targets/chat-completions/interceptors/include-usage-stream-options.ts`
   - ensure streaming usage options needed by native chat handling
 - `src/data-plane/targets/chat-completions/interceptors/fix-claude-choice-shape.ts`

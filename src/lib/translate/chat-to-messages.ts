@@ -95,12 +95,6 @@ export async function translateChatToMessages(
   if (payload.tool_choice != null) {
     result.tool_choice = translateToolChoice(payload.tool_choice);
   }
-  if (payload.thinking_budget) {
-    result.thinking = {
-      type: "enabled",
-      budget_tokens: payload.thinking_budget,
-    };
-  }
 
   return result;
 }

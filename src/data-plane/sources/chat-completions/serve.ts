@@ -84,7 +84,6 @@ export const serveChatCompletions = async (
         githubToken,
         accountType,
         fetchOptions: plan.fetchOptions,
-        allowThinkingBudget: plan.allowThinkingBudget,
       }),
       plan.wantsStream,
     );

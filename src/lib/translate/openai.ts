@@ -65,11 +65,10 @@ export const mapOpenAIUsage = (
 
 export function translateToOpenAI(
   payload: AnthropicMessagesPayload,
-  options: { allowThinkingBudget?: boolean } = {},
 ): ChatCompletionsPayload {
   mergeToolResultBlocks(payload);
 
-  const result: ChatCompletionsPayload = {
+  return {
     model: payload.model,
     messages: translateMessages(payload.messages, payload.system),
     max_tokens: payload.max_tokens,
@@ -82,14 +81,6 @@ export function translateToOpenAI(
     tools: translateTools(payload.tools),
     tool_choice: translateToolChoice(payload.tool_choice),
   };
-
-  if (
-    options.allowThinkingBudget !== false && payload.thinking?.budget_tokens
-  ) {
-    result.thinking_budget = payload.thinking.budget_tokens;
-  }
-
-  return result;
 }
 
 /**

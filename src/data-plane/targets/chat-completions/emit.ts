@@ -17,9 +17,7 @@ import type { EmitInput, EmitResult } from "../emit-types.ts";
 import { chatCompletionsTargetInterceptors } from "./interceptors/index.ts";
 
 export interface EmitToChatCompletionsInput
-  extends EmitInput<ChatCompletionsPayload> {
-  allowThinkingBudget: boolean;
-}
+  extends EmitInput<ChatCompletionsPayload> {}
 
 export const emitToChatCompletions = async (
   input: EmitToChatCompletionsInput,

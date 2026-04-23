@@ -18,8 +18,6 @@ export interface ChatCompletionsPayload {
     | null;
   /** Request usage stats in streaming responses */
   stream_options?: { include_usage: boolean } | null;
-  /** Thinking budget for reasoning models */
-  thinking_budget?: number;
 }
 
 export interface Tool {

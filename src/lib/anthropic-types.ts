@@ -16,8 +16,11 @@ export interface AnthropicMessagesPayload {
     type: "auto" | "any" | "tool" | "none";
     name?: string;
   };
-  thinking?: { type: "enabled" | "adaptive"; budget_tokens?: number };
-  output_config?: { effort?: "low" | "medium" | "high" | "max" };
+  thinking?: {
+    type: "enabled" | "adaptive" | "disabled";
+    budget_tokens?: number;
+  };
+  output_config?: { effort?: string };
   service_tier?: "auto" | "standard_only";
 }
 

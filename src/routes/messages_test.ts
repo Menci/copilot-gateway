@@ -276,7 +276,8 @@ Deno.test("/v1/messages uses native endpoint and applies native request workarou
         model: "claude-native",
         max_tokens: 64,
         stream: false,
-        system: "system note\nx-anthropic-billing-header: cc_version=2.1.114; cc_entrypoint=cli; cch=abcde12345;",
+        system:
+          "system note\nx-anthropic-billing-header: cc_version=2.1.114; cc_entrypoint=cli; cch=abcde12345;",
         service_tier: "auto",
         thinking: { type: "enabled", budget_tokens: 512 },
         tools: [
@@ -981,7 +982,7 @@ Deno.test("/v1/messages falls back to responses and preserves reasoning round-tr
   );
 });
 
-Deno.test("/v1/messages with budgeted thinking prefers responses on dual-endpoint models and picks the nearest supported effort", async () => {
+Deno.test("/v1/messages drops output_config.effort max when translating to responses", async () => {
   const { apiKey } = await setupAppTest();
 
   let upstreamBody: Record<string, unknown> | undefined;
@@ -1002,37 +1003,22 @@ Deno.test("/v1/messages with budgeted thinking prefers responses on dual-endpoin
     if (url.pathname === "/models") {
       return jsonResponse(copilotModels([
         {
-          id: "gpt-dual-endpoint",
-          supported_endpoints: ["/responses", "/chat/completions"],
+          id: "gpt-responses-max-effort",
+          supported_endpoints: ["/responses"],
         },
       ]));
     }
-    if (url.pathname === "/chat/completions") {
-      throw new Error(
-        "chat/completions should not be used for budgeted thinking",
-      );
-    }
     if (url.pathname === "/responses") {
-      const body = JSON.parse(await request.text()) as Record<string, unknown>;
-      if ((body.max_output_tokens as number | undefined) === 1) {
-        const reasoning = body.reasoning as Record<string, unknown> | undefined;
-        if (!reasoning) return jsonResponse({ ok: true });
-        const effort = reasoning.effort;
-        return effort === "low" || effort === "medium"
-          ? jsonResponse({ ok: true })
-          : jsonResponse({ error: { message: "unsupported effort" } }, 400);
-      }
-
-      upstreamBody = body;
+      upstreamBody = JSON.parse(await request.text());
       return sseResponse([
         {
           event: "response.completed",
           data: {
             type: "response.completed",
             response: {
-              id: "resp_dual",
+              id: "resp_max_effort",
               object: "response",
-              model: "gpt-dual-endpoint",
+              model: "gpt-responses-max-effort",
               status: "completed",
               output_text: "ok",
               output: [
@@ -1058,10 +1044,10 @@ Deno.test("/v1/messages with budgeted thinking prefers responses on dual-endpoin
         "x-api-key": apiKey.key,
       },
       body: JSON.stringify({
-        model: "gpt-dual-endpoint",
+        model: "gpt-responses-max-effort",
         max_tokens: 256,
         stream: false,
-        thinking: { type: "enabled", budget_tokens: 21332 },
+        output_config: { effort: "max" },
         messages: [{ role: "user", content: "Hi" }],
       }),
     });
@@ -1072,16 +1058,11 @@ Deno.test("/v1/messages with budgeted thinking prefers responses on dual-endpoin
   });
 
   assertExists(upstreamBody);
-  assertEquals(upstreamBody!.stream, true);
-  assertEquals(
-    (upstreamBody!.reasoning as Record<string, unknown>).effort,
-    "medium",
-  );
-  const input = upstreamBody!.input as Array<Record<string, unknown>>;
-  assertEquals((input[0] as Record<string, unknown>).type, "message");
+  assertFalse("reasoning" in upstreamBody!);
+  assertFalse("include" in upstreamBody!);
 });
 
-Deno.test("/v1/messages drops reasoning config when the responses endpoint supports no reasoning efforts", async () => {
+Deno.test("/v1/messages with disabled thinking prefers responses on dual-endpoint models", async () => {
   const { apiKey } = await setupAppTest();
 
   let upstreamBody: Record<string, unknown> | undefined;
@@ -1102,22 +1083,23 @@ Deno.test("/v1/messages drops reasoning config when the responses endpoint suppo
     if (url.pathname === "/models") {
       return jsonResponse(copilotModels([
         {
-          id: "gpt-no-reasoning",
+          id: "gpt-disabled-thinking",
           supported_endpoints: ["/responses", "/chat/completions"],
         },
       ]));
     }
     if (url.pathname === "/chat/completions") {
       throw new Error(
-        "chat/completions should not be used for budgeted thinking",
+        "chat/completions should not be used for disabled thinking",
       );
     }
     if (url.pathname === "/responses") {
       const body = JSON.parse(await request.text()) as Record<string, unknown>;
       if ((body.max_output_tokens as number | undefined) === 1) {
-        return body.reasoning
-          ? jsonResponse({ error: { message: "unsupported effort" } }, 400)
-          : jsonResponse({ ok: true });
+        const reasoning = body.reasoning as Record<string, unknown> | undefined;
+        return !reasoning || reasoning.effort === "none"
+          ? jsonResponse({ ok: true })
+          : jsonResponse({ error: { message: "unsupported effort" } }, 400);
       }
 
       upstreamBody = body;
@@ -1129,7 +1111,7 @@ Deno.test("/v1/messages drops reasoning config when the responses endpoint suppo
             response: {
               id: "resp_plain",
               object: "response",
-              model: "gpt-no-reasoning",
+              model: "gpt-disabled-thinking",
               status: "completed",
               output_text: "plain",
               output: [
@@ -1155,10 +1137,10 @@ Deno.test("/v1/messages drops reasoning config when the responses endpoint suppo
         "x-api-key": apiKey.key,
       },
       body: JSON.stringify({
-        model: "gpt-no-reasoning",
+        model: "gpt-disabled-thinking",
         max_tokens: 256,
         stream: false,
-        thinking: { type: "enabled", budget_tokens: 4096 },
+        thinking: { type: "disabled" },
         messages: [{ role: "user", content: "Hi" }],
       }),
     });
@@ -1169,8 +1151,10 @@ Deno.test("/v1/messages drops reasoning config when the responses endpoint suppo
   });
 
   assertExists(upstreamBody);
-  assertFalse("reasoning" in upstreamBody!);
-  assertFalse("include" in upstreamBody!);
+  assertEquals(
+    (upstreamBody!.reasoning as Record<string, unknown>).effort,
+    "none",
+  );
 });
 
 Deno.test("stripReservedKeywords removes entire billing header line from string system", async () => {
@@ -1180,21 +1164,71 @@ Deno.test("stripReservedKeywords removes entire billing header line from string 
 
   await withMockedFetch(async (request) => {
     const url = new URL(request.url);
-    if (url.hostname === "update.code.visualstudio.com") return jsonResponse(["1.110.1"]);
+    if (url.hostname === "update.code.visualstudio.com") {
+      return jsonResponse(["1.110.1"]);
+    }
     if (url.pathname === "/copilot_internal/v2/token") {
-      return jsonResponse({ token: "tok", expires_at: 4102444800, refresh_in: 3600 });
+      return jsonResponse({
+        token: "tok",
+        expires_at: 4102444800,
+        refresh_in: 3600,
+      });
     }
     if (url.pathname === "/models") {
-      return jsonResponse(copilotModels([{ id: "claude-native", supported_endpoints: ["/v1/messages"] }]));
+      return jsonResponse(
+        copilotModels([{
+          id: "claude-native",
+          supported_endpoints: ["/v1/messages"],
+        }]),
+      );
     }
     if (url.pathname === "/v1/messages") {
       upstreamBody = JSON.parse(await request.text());
       return sseResponse([
-        { event: "message_start", data: { type: "message_start", message: { id: "msg_1", type: "message", role: "assistant", content: [], model: "claude-native", stop_reason: null, stop_sequence: null, usage: { input_tokens: 10, output_tokens: 0 } } } },
-        { event: "content_block_start", data: { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } } },
-        { event: "content_block_delta", data: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "ok" } } },
-        { event: "content_block_stop", data: { type: "content_block_stop", index: 0 } },
-        { event: "message_delta", data: { type: "message_delta", delta: { stop_reason: "end_turn", stop_sequence: null }, usage: { output_tokens: 1 } } },
+        {
+          event: "message_start",
+          data: {
+            type: "message_start",
+            message: {
+              id: "msg_1",
+              type: "message",
+              role: "assistant",
+              content: [],
+              model: "claude-native",
+              stop_reason: null,
+              stop_sequence: null,
+              usage: { input_tokens: 10, output_tokens: 0 },
+            },
+          },
+        },
+        {
+          event: "content_block_start",
+          data: {
+            type: "content_block_start",
+            index: 0,
+            content_block: { type: "text", text: "" },
+          },
+        },
+        {
+          event: "content_block_delta",
+          data: {
+            type: "content_block_delta",
+            index: 0,
+            delta: { type: "text_delta", text: "ok" },
+          },
+        },
+        {
+          event: "content_block_stop",
+          data: { type: "content_block_stop", index: 0 },
+        },
+        {
+          event: "message_delta",
+          data: {
+            type: "message_delta",
+            delta: { stop_reason: "end_turn", stop_sequence: null },
+            usage: { output_tokens: 1 },
+          },
+        },
         { event: "message_stop", data: { type: "message_stop" } },
       ]);
     }
@@ -1207,7 +1241,8 @@ Deno.test("stripReservedKeywords removes entire billing header line from string 
         model: "claude-native",
         max_tokens: 10,
         stream: false,
-        system: "You are helpful.\nx-anthropic-billing-header: cc_version=2.1.114; cc_entrypoint=cli; cch=abcde12345;\nBe concise.",
+        system:
+          "You are helpful.\nx-anthropic-billing-header: cc_version=2.1.114; cc_entrypoint=cli; cch=abcde12345;\nBe concise.",
         messages: [{ role: "user", content: "Hi" }],
       }),
     });
@@ -1229,21 +1264,71 @@ Deno.test("stripReservedKeywords removes billing-only system block without 400 e
 
   await withMockedFetch(async (request) => {
     const url = new URL(request.url);
-    if (url.hostname === "update.code.visualstudio.com") return jsonResponse(["1.110.1"]);
+    if (url.hostname === "update.code.visualstudio.com") {
+      return jsonResponse(["1.110.1"]);
+    }
     if (url.pathname === "/copilot_internal/v2/token") {
-      return jsonResponse({ token: "tok", expires_at: 4102444800, refresh_in: 3600 });
+      return jsonResponse({
+        token: "tok",
+        expires_at: 4102444800,
+        refresh_in: 3600,
+      });
     }
     if (url.pathname === "/models") {
-      return jsonResponse(copilotModels([{ id: "claude-native", supported_endpoints: ["/v1/messages"] }]));
+      return jsonResponse(
+        copilotModels([{
+          id: "claude-native",
+          supported_endpoints: ["/v1/messages"],
+        }]),
+      );
     }
     if (url.pathname === "/v1/messages") {
       upstreamBody = JSON.parse(await request.text());
       return sseResponse([
-        { event: "message_start", data: { type: "message_start", message: { id: "msg_2", type: "message", role: "assistant", content: [], model: "claude-native", stop_reason: null, stop_sequence: null, usage: { input_tokens: 5, output_tokens: 0 } } } },
-        { event: "content_block_start", data: { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } } },
-        { event: "content_block_delta", data: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "ok" } } },
-        { event: "content_block_stop", data: { type: "content_block_stop", index: 0 } },
-        { event: "message_delta", data: { type: "message_delta", delta: { stop_reason: "end_turn", stop_sequence: null }, usage: { output_tokens: 1 } } },
+        {
+          event: "message_start",
+          data: {
+            type: "message_start",
+            message: {
+              id: "msg_2",
+              type: "message",
+              role: "assistant",
+              content: [],
+              model: "claude-native",
+              stop_reason: null,
+              stop_sequence: null,
+              usage: { input_tokens: 5, output_tokens: 0 },
+            },
+          },
+        },
+        {
+          event: "content_block_start",
+          data: {
+            type: "content_block_start",
+            index: 0,
+            content_block: { type: "text", text: "" },
+          },
+        },
+        {
+          event: "content_block_delta",
+          data: {
+            type: "content_block_delta",
+            index: 0,
+            delta: { type: "text_delta", text: "ok" },
+          },
+        },
+        {
+          event: "content_block_stop",
+          data: { type: "content_block_stop", index: 0 },
+        },
+        {
+          event: "message_delta",
+          data: {
+            type: "message_delta",
+            delta: { stop_reason: "end_turn", stop_sequence: null },
+            usage: { output_tokens: 1 },
+          },
+        },
         { event: "message_stop", data: { type: "message_stop" } },
       ]);
     }
@@ -1257,8 +1342,16 @@ Deno.test("stripReservedKeywords removes billing-only system block without 400 e
         max_tokens: 10,
         stream: false,
         system: [
-          { type: "text", text: "x-anthropic-billing-header: cc_version=2.1.114; cc_entrypoint=cli; cch=ff00ff00ff;" },
-          { type: "text", text: "You are a helpful assistant.", cache_control: { type: "ephemeral" } },
+          {
+            type: "text",
+            text:
+              "x-anthropic-billing-header: cc_version=2.1.114; cc_entrypoint=cli; cch=ff00ff00ff;",
+          },
+          {
+            type: "text",
+            text: "You are a helpful assistant.",
+            cache_control: { type: "ephemeral" },
+          },
         ],
         messages: [{ role: "user", content: "Hi" }],
       }),
@@ -1280,21 +1373,71 @@ Deno.test("stripReservedKeywords handles all-billing system blocks by removing s
 
   await withMockedFetch(async (request) => {
     const url = new URL(request.url);
-    if (url.hostname === "update.code.visualstudio.com") return jsonResponse(["1.110.1"]);
+    if (url.hostname === "update.code.visualstudio.com") {
+      return jsonResponse(["1.110.1"]);
+    }
     if (url.pathname === "/copilot_internal/v2/token") {
-      return jsonResponse({ token: "tok", expires_at: 4102444800, refresh_in: 3600 });
+      return jsonResponse({
+        token: "tok",
+        expires_at: 4102444800,
+        refresh_in: 3600,
+      });
     }
     if (url.pathname === "/models") {
-      return jsonResponse(copilotModels([{ id: "claude-native", supported_endpoints: ["/v1/messages"] }]));
+      return jsonResponse(
+        copilotModels([{
+          id: "claude-native",
+          supported_endpoints: ["/v1/messages"],
+        }]),
+      );
     }
     if (url.pathname === "/v1/messages") {
       upstreamBody = JSON.parse(await request.text());
       return sseResponse([
-        { event: "message_start", data: { type: "message_start", message: { id: "msg_3", type: "message", role: "assistant", content: [], model: "claude-native", stop_reason: null, stop_sequence: null, usage: { input_tokens: 5, output_tokens: 0 } } } },
-        { event: "content_block_start", data: { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } } },
-        { event: "content_block_delta", data: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "ok" } } },
-        { event: "content_block_stop", data: { type: "content_block_stop", index: 0 } },
-        { event: "message_delta", data: { type: "message_delta", delta: { stop_reason: "end_turn", stop_sequence: null }, usage: { output_tokens: 1 } } },
+        {
+          event: "message_start",
+          data: {
+            type: "message_start",
+            message: {
+              id: "msg_3",
+              type: "message",
+              role: "assistant",
+              content: [],
+              model: "claude-native",
+              stop_reason: null,
+              stop_sequence: null,
+              usage: { input_tokens: 5, output_tokens: 0 },
+            },
+          },
+        },
+        {
+          event: "content_block_start",
+          data: {
+            type: "content_block_start",
+            index: 0,
+            content_block: { type: "text", text: "" },
+          },
+        },
+        {
+          event: "content_block_delta",
+          data: {
+            type: "content_block_delta",
+            index: 0,
+            delta: { type: "text_delta", text: "ok" },
+          },
+        },
+        {
+          event: "content_block_stop",
+          data: { type: "content_block_stop", index: 0 },
+        },
+        {
+          event: "message_delta",
+          data: {
+            type: "message_delta",
+            delta: { stop_reason: "end_turn", stop_sequence: null },
+            usage: { output_tokens: 1 },
+          },
+        },
         { event: "message_stop", data: { type: "message_stop" } },
       ]);
     }
@@ -1308,7 +1451,11 @@ Deno.test("stripReservedKeywords handles all-billing system blocks by removing s
         max_tokens: 10,
         stream: false,
         system: [
-          { type: "text", text: "x-anthropic-billing-header: cc_version=2.1.114; cc_entrypoint=cli; cch=aabbccdd;" },
+          {
+            type: "text",
+            text:
+              "x-anthropic-billing-header: cc_version=2.1.114; cc_entrypoint=cli; cch=aabbccdd;",
+          },
         ],
         messages: [{ role: "user", content: "Hi" }],
       }),

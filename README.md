@@ -21,9 +21,9 @@ Copilot Gateway translates between API formats on the fly:
 The gateway auto-detects each model's supported endpoints (native Messages,
 Responses, or Chat Completions) and picks the best translation path. When
 endpoint metadata is not enough, it also runs and caches lightweight capability
-probes (for example, whether a model accepts `reasoning.effort` on `/responses`
-or `thinking_budget` on `/chat/completions`) so unsupported fields can be
-dropped without hardcoding model names.
+probes (for example, which `reasoning.effort` values a model accepts on
+`/responses`) so unsupported fields can be dropped without hardcoding model
+names.
 
 ## Quick Start
 

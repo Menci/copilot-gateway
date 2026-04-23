@@ -21,7 +21,6 @@ export type MessagesPlan =
     target: "chat-completions";
     wantsStream: boolean;
     fetchOptions: CopilotFetchOptions;
-    allowThinkingBudget: boolean;
   };
 
 export type ResponsesPlan =
@@ -57,5 +56,4 @@ export type ChatPlan =
     target: "chat-completions";
     wantsStream: boolean;
     fetchOptions: CopilotFetchOptions;
-    allowThinkingBudget: boolean;
   };

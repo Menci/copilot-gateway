@@ -30,6 +30,7 @@ import type {
   ResponseToolChoice,
 } from "../responses-types.ts";
 import {
+  getAnthropicRequestedReasoningEffort,
   makeResponsesReasoningId,
   type ResponsesReasoningEffort,
 } from "../reasoning.ts";
@@ -41,8 +42,14 @@ export function translateAnthropicToResponses(
   payload: AnthropicMessagesPayload,
   options: { reasoningEffort?: ResponsesReasoningEffort | null } = {},
 ): ResponsesPayload {
-  const reasoning = options.reasoningEffort
-    ? { effort: options.reasoningEffort, summary: "detailed" as const }
+  // `undefined` means no planner override, so translate from the source
+  // contract directly. `null` means the planner explicitly decided to suppress
+  // a reasoning config on the Responses target.
+  const effort = options.reasoningEffort === undefined
+    ? getAnthropicRequestedReasoningEffort(payload)
+    : options.reasoningEffort;
+  const reasoning = effort
+    ? { effort, summary: "detailed" as const }
     : undefined;
 
   return {
@@ -344,6 +351,8 @@ export function translateResponsesToAnthropicPayload(
   if (payload.instructions) allSystemParts.push(payload.instructions);
   allSystemParts.push(...systemParts);
 
+  const effort = payload.reasoning?.effort;
+
   return {
     model: payload.model,
     messages,
@@ -357,6 +366,11 @@ export function translateResponsesToAnthropicPayload(
     metadata: payload.metadata
       ? { ...payload.metadata } as { user_id?: string }
       : undefined,
+    ...(effort === "none"
+      ? { thinking: { type: "disabled" } }
+      : effort
+      ? { output_config: { effort } }
+      : {}),
   };
 }
 

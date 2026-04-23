@@ -82,13 +82,10 @@ export const serveMessages = async (
 
     const result = await emitToChatCompletions({
       sourceApi: "messages",
-      payload: buildChatTargetRequest(payload, {
-        allowThinkingBudget: plan.allowThinkingBudget,
-      }),
+      payload: buildChatTargetRequest(payload),
       githubToken,
       accountType,
       fetchOptions: plan.fetchOptions,
-      allowThinkingBudget: plan.allowThinkingBudget,
     });
 
     return await respondMessages(

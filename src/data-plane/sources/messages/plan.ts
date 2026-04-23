@@ -1,7 +1,6 @@
 import type { AnthropicMessagesPayload } from "../../../lib/anthropic-types.ts";
 import { getAnthropicRequestedReasoningEffort } from "../../../lib/reasoning.ts";
 import { getModelCapabilities } from "../../shared/models/get-model-capabilities.ts";
-import { probeChatThinkingBudget } from "../../shared/probes/probe-chat-thinking-budget.ts";
 import { probeResponsesReasoningEffortForMessages } from "../../shared/probes/probe-responses-reasoning-effort.ts";
 import type { MessagesPlan } from "../../shared/types/plan.ts";
 
@@ -85,12 +84,6 @@ export const planMessagesRequest = async (
     target: "chat-completions",
     wantsStream,
     fetchOptions,
-    allowThinkingBudget: await probeThinkingBudget(
-      payload,
-      githubToken,
-      accountType,
-      capabilities.supportsChatCompletions,
-    ),
   };
 };
 
@@ -108,25 +101,5 @@ const probeResponsesReasoningEffort = async (
   } catch (error) {
     console.warn("Failed to probe Responses reasoning efforts:", error);
     return null;
-  }
-};
-
-const probeThinkingBudget = async (
-  payload: AnthropicMessagesPayload,
-  githubToken: string,
-  accountType: string,
-  supportsChatCompletions: boolean,
-): Promise<boolean> => {
-  if (!payload.thinking?.budget_tokens || !supportsChatCompletions) return true;
-
-  try {
-    return await probeChatThinkingBudget(
-      payload.model,
-      githubToken,
-      accountType,
-    );
-  } catch (error) {
-    console.warn("Failed to probe Chat Completions thinking_budget:", error);
-    return false;
   }
 };

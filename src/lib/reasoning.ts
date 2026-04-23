@@ -1,9 +1,12 @@
 import type { AnthropicMessagesPayload } from "./anthropic-types.ts";
-import type { ResponsesPayload } from "./responses-types.ts";
 
-export type ResponsesReasoningEffort = NonNullable<
-  NonNullable<ResponsesPayload["reasoning"]>["effort"]
->;
+export type ResponsesReasoningEffort =
+  | "none"
+  | "minimal"
+  | "low"
+  | "medium"
+  | "high"
+  | "xhigh";
 
 export const RESPONSES_REASONING_EFFORTS = [
   "none",
@@ -23,32 +26,11 @@ const REASONING_RANK: Record<ResponsesReasoningEffort, number> = {
   xhigh: 5,
 };
 
-export function mapThinkingBudgetToReasoningEffort(
-  budgetTokens: number | null | undefined,
-): ResponsesReasoningEffort | null {
-  if (!budgetTokens) return null;
-  if (budgetTokens <= 2048) return "low";
-  if (budgetTokens <= 8192) return "medium";
-  return "high";
-}
-
 export function getAnthropicRequestedReasoningEffort(
   payload: AnthropicMessagesPayload,
-): ResponsesReasoningEffort | null {
-  if (payload.output_config?.effort) {
-    const effort = payload.output_config.effort;
-    if (effort === "max") return "high";
-    if (effort === "low" || effort === "medium" || effort === "high") {
-      return effort;
-    }
-  }
-
-  const budgetEffort = mapThinkingBudgetToReasoningEffort(
-    payload.thinking?.budget_tokens,
-  );
-  if (budgetEffort) return budgetEffort;
-
-  if (payload.thinking?.type === "enabled") return "high";
+): string | null {
+  if (payload.output_config?.effort) return payload.output_config.effort;
+  if (payload.thinking?.type === "disabled") return "none";
   return null;
 }
 

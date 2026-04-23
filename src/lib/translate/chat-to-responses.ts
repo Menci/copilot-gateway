@@ -21,7 +21,6 @@ import type {
 } from "../responses-types.ts";
 import {
   makeResponsesReasoningId,
-  mapThinkingBudgetToReasoningEffort,
   type ResponsesReasoningEffort,
 } from "../reasoning.ts";
 
@@ -120,8 +119,10 @@ export function translateChatToResponses(
     parallel_tool_calls: true,
   };
 
-  const effort = options.reasoningEffort ??
-    mapThinkingBudgetToReasoningEffort(payload.thinking_budget);
+  // Non-standard Chat Completions top-level fields are only preserved on the
+  // native `/chat/completions` path. Pairwise translation only carries fields
+  // with an explicit source-side contract.
+  const effort = options.reasoningEffort;
 
   if (effort) {
     result.reasoning = { effort, summary: "detailed" };
