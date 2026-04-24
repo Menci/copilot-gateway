@@ -1,4 +1,5 @@
 import { assertEquals } from "@std/assert";
+import { FakeTime } from "jsr:@std/testing@^1/time";
 import { jsonResponse, withMockedFetch } from "../../../test-helpers.ts";
 import { createMicrosoftGroundingWebSearchProvider } from "./microsoft-grounding.ts";
 
@@ -77,19 +78,114 @@ Deno.test(
 );
 
 Deno.test(
-  "createMicrosoftGroundingWebSearchProvider maps 429 to too_many_requests",
+  "createMicrosoftGroundingWebSearchProvider retries 429 with by-design 1s/2s/4s/8s backoff and ignores retryAfter when the next attempt succeeds",
   async () => {
-    await withMockedFetch(
-      () => jsonResponse({ message: "rate limited" }, 429),
-      async () => {
-        const provider = createMicrosoftGroundingWebSearchProvider("ms-test");
-        assertEquals(await provider({ query: "React documentation" }), {
-          type: "error",
-          errorCode: "too_many_requests",
-          message: "rate limited",
-        });
-      },
-    );
+    const fakeTime = new FakeTime();
+    const attemptTimes: number[] = [];
+    let attempts = 0;
+
+    try {
+      await withMockedFetch(
+        () => {
+          attemptTimes.push(Date.now());
+          attempts += 1;
+
+          if (attempts < 5) {
+            return jsonResponse(
+              { message: "rate limited", retryAfter: "60s" },
+              429,
+            );
+          }
+
+          return jsonResponse({
+            webResults: [{
+              title: "React",
+              url: "https://react.dev",
+              content: "Official React documentation",
+            }],
+          });
+        },
+        async () => {
+          const provider = createMicrosoftGroundingWebSearchProvider("ms-test");
+          const resultPromise = provider({ query: "React documentation" });
+
+          fakeTime.runMicrotasks();
+          assertEquals(attemptTimes.length, 1);
+
+          await fakeTime.tickAsync(1000);
+          assertEquals(attemptTimes.length, 2);
+
+          await fakeTime.tickAsync(2000);
+          assertEquals(attemptTimes.length, 3);
+
+          await fakeTime.tickAsync(4000);
+          assertEquals(attemptTimes.length, 4);
+
+          await fakeTime.tickAsync(8000);
+
+          const result = await resultPromise;
+          assertEquals(attemptTimes.length, 5);
+          assertEquals(
+            attemptTimes.map((time) => time - attemptTimes[0]),
+            [0, 1000, 3000, 7000, 15000],
+          );
+          assertEquals(result.type, "ok");
+        },
+      );
+    } finally {
+      fakeTime.restore();
+    }
+  },
+);
+
+Deno.test(
+  "createMicrosoftGroundingWebSearchProvider returns too_many_requests after four by-design 429 retries and ignores retryAfter",
+  async () => {
+    const fakeTime = new FakeTime();
+    const attemptTimes: number[] = [];
+
+    try {
+      await withMockedFetch(
+        () => {
+          attemptTimes.push(Date.now());
+          return jsonResponse(
+            { message: "rate limited", retryAfter: "60s" },
+            429,
+          );
+        },
+        async () => {
+          const provider = createMicrosoftGroundingWebSearchProvider("ms-test");
+          const resultPromise = provider({ query: "React documentation" });
+
+          fakeTime.runMicrotasks();
+          assertEquals(attemptTimes.length, 1);
+
+          await fakeTime.tickAsync(1000);
+          assertEquals(attemptTimes.length, 2);
+
+          await fakeTime.tickAsync(2000);
+          assertEquals(attemptTimes.length, 3);
+
+          await fakeTime.tickAsync(4000);
+          assertEquals(attemptTimes.length, 4);
+
+          await fakeTime.tickAsync(8000);
+
+          assertEquals(await resultPromise, {
+            type: "error",
+            errorCode: "too_many_requests",
+            message: "rate limited",
+          });
+          assertEquals(attemptTimes.length, 5);
+          assertEquals(
+            attemptTimes.map((time) => time - attemptTimes[0]),
+            [0, 1000, 3000, 7000, 15000],
+          );
+        },
+      );
+    } finally {
+      fakeTime.restore();
+    }
   },
 );
 
