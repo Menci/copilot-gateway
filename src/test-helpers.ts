@@ -1,6 +1,7 @@
 import { app } from "./app.ts";
 import { clearCopilotTokenCache } from "./lib/copilot.ts";
 import { initEnv } from "./lib/env.ts";
+import type { SearchConfig } from "./data-plane/web-search/types.ts";
 import { InMemoryRepo } from "./repo/memory.ts";
 import { initRepo } from "./repo/index.ts";
 import type { ApiKey, GitHubAccount } from "./repo/types.ts";
@@ -9,6 +10,7 @@ interface SetupOptions {
   adminKey?: string;
   apiKey?: ApiKey;
   githubAccount?: GitHubAccount;
+  searchConfig?: SearchConfig;
 }
 
 type FetchInput = Parameters<typeof fetch>[0];
@@ -57,6 +59,10 @@ export async function setupAppTest(options: SetupOptions = {}): Promise<AppTestC
   };
   await repo.github.saveAccount(githubAccount.user.id, githubAccount);
   await repo.github.setActiveId(githubAccount.user.id);
+
+  if (options.searchConfig !== undefined) {
+    await repo.searchConfig.save(options.searchConfig);
+  }
 
   return { repo, adminKey, apiKey, githubAccount };
 }

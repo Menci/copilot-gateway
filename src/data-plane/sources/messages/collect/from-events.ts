@@ -1,4 +1,7 @@
-import type { MessagesResponse } from "../../../../lib/messages-types.ts";
+import type {
+  MessagesResponse,
+  MessagesTextCitation,
+} from "../../../../lib/messages-types.ts";
 import { reassembleMessagesSSE } from "../../../../lib/sse-reassemble.ts";
 import {
   collectSSE,
@@ -9,6 +12,25 @@ import {
   sseFrame,
   type StreamFrame,
 } from "../../../shared/stream/types.ts";
+
+const citationToSsePayload = (citation: MessagesTextCitation) =>
+  citation.type === "search_result_location"
+    ? {
+      type: citation.type,
+      source: citation.url,
+      title: citation.title,
+      search_result_index: citation.search_result_index,
+      start_block_index: citation.start_block_index,
+      end_block_index: citation.end_block_index,
+      ...(citation.cited_text ? { cited_text: citation.cited_text } : {}),
+    }
+    : {
+      type: citation.type,
+      url: citation.url,
+      title: citation.title,
+      encrypted_index: citation.encrypted_index,
+      ...(citation.cited_text ? { cited_text: citation.cited_text } : {}),
+    };
 
 export const messagesResponseToSSEFrames = (
   response: MessagesResponse,
@@ -42,11 +64,31 @@ export const messagesResponseToSSEFrames = (
           JSON.stringify({
             type: "content_block_start",
             index,
-            content_block: { type: "text", text: "" },
+            content_block: {
+              type: "text",
+              text: "",
+              ...(block.citations?.length ? { citations: [] } : {}),
+            },
           }),
           "content_block_start",
         ),
       );
+
+      for (const citation of block.citations ?? []) {
+        frames.push(
+          sseFrame(
+            JSON.stringify({
+              type: "content_block_delta",
+              index,
+              delta: {
+                type: "citations_delta",
+                citation: citationToSsePayload(citation),
+              },
+            }),
+            "content_block_delta",
+          ),
+        );
+      }
 
       if (block.text.length > 0) {
         frames.push(
@@ -54,7 +96,10 @@ export const messagesResponseToSSEFrames = (
             JSON.stringify({
               type: "content_block_delta",
               index,
-              delta: { type: "text_delta", text: block.text },
+              delta: {
+                type: "text_delta",
+                text: block.text,
+              },
             }),
             "content_block_delta",
           ),
@@ -97,6 +142,55 @@ export const messagesResponseToSSEFrames = (
             },
           }),
           "content_block_delta",
+        ),
+      );
+      frames.push(
+        sseFrame(
+          JSON.stringify({ type: "content_block_stop", index }),
+          "content_block_stop",
+        ),
+      );
+      return;
+    }
+
+    if (block.type === "server_tool_use") {
+      frames.push(
+        sseFrame(
+          JSON.stringify({
+            type: "content_block_start",
+            index,
+            content_block: {
+              type: "server_tool_use",
+              id: block.id,
+              name: block.name,
+              input: block.input,
+            },
+          }),
+          "content_block_start",
+        ),
+      );
+      frames.push(
+        sseFrame(
+          JSON.stringify({ type: "content_block_stop", index }),
+          "content_block_stop",
+        ),
+      );
+      return;
+    }
+
+    if (block.type === "web_search_tool_result") {
+      frames.push(
+        sseFrame(
+          JSON.stringify({
+            type: "content_block_start",
+            index,
+            content_block: {
+              type: "web_search_tool_result",
+              tool_use_id: block.tool_use_id,
+              content: block.content,
+            },
+          }),
+          "content_block_start",
         ),
       );
       frames.push(
@@ -194,6 +288,11 @@ export const messagesResponseToSSEFrames = (
               cache_read_input_tokens: response.usage.cache_read_input_tokens,
             }
             : {}),
+          ...(response.usage.server_tool_use !== undefined
+            ? {
+              server_tool_use: response.usage.server_tool_use,
+            }
+            : {}),
         },
       }),
       "message_delta",
@@ -223,3 +322,7 @@ export const collectMessagesEventsToResponse = async (
   const collected = await collectSSE(expandMessagesFrames(frames));
   return await reassembleMessagesSSE(sseFramesToStream(collected));
 };
+
+export const anthropicResponseToSSEFrames = messagesResponseToSSEFrames;
+export const expandAnthropicFrames = expandMessagesFrames;
+export const collectAnthropicEventsToResponse = collectMessagesEventsToResponse;

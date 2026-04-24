@@ -1,5 +1,6 @@
 import { assertEquals } from "@std/assert";
 import { Hono } from "hono";
+import { DEFAULT_SEARCH_CONFIG } from "../data-plane/web-search/search-config.ts";
 import { initRepo } from "../repo/index.ts";
 import { InMemoryRepo } from "../repo/memory.ts";
 import { exportData, importData } from "./data-transfer.ts";
@@ -108,6 +109,7 @@ Deno.test("export — empty database returns correct structure", async () => {
   assertEquals(result.data.activeGithubAccountId, null);
   assertEquals(Array.isArray(result.data.usage), true);
   assertEquals(result.data.usage.length, 0);
+  assertEquals(result.data.searchConfig, DEFAULT_SEARCH_CONFIG);
 });
 
 Deno.test("export — contains all stored data", async () => {
@@ -120,6 +122,11 @@ Deno.test("export — contains all stored data", async () => {
   await repo.github.setActiveId(200);
   await repo.usage.set(USAGE_1);
   await repo.usage.set(USAGE_2);
+  await repo.searchConfig.save({
+    provider: "tavily",
+    tavily: { apiKey: "tvly-test" },
+    microsoftGrounding: { apiKey: "ms-test" },
+  });
 
   const result = await doExport(app);
 
@@ -127,6 +134,7 @@ Deno.test("export — contains all stored data", async () => {
   assertEquals(result.data.githubAccounts.length, 2);
   assertEquals(result.data.activeGithubAccountId, 200);
   assertEquals(result.data.usage.length, 2);
+  assertEquals(result.data.searchConfig.provider, "tavily");
 });
 
 Deno.test("export — apiKeys contain all fields", async () => {
@@ -267,6 +275,60 @@ Deno.test("round-trip — merge import then export contains both old and new dat
   assertEquals(exported.data.usage.length, 2);
   // Merge preserves existing activeId
   assertEquals(exported.data.activeGithubAccountId, 100);
+});
+
+Deno.test("export/import include searchConfig and replace it as a singleton when present", async () => {
+  const { app, repo } = setup();
+
+  await repo.searchConfig.save({
+    provider: "tavily",
+    tavily: { apiKey: "tvly-original" },
+    microsoftGrounding: { apiKey: "ms-original" },
+  });
+
+  const exported = await doExport(app);
+  assertEquals(exported.data.searchConfig.provider, "tavily");
+
+  const { status } = await doImport(app, "merge", {
+    apiKeys: [],
+    githubAccounts: [],
+    activeGithubAccountId: null,
+    usage: [],
+    searchConfig: {
+      provider: "microsoft-grounding",
+      tavily: { apiKey: "tvly-imported" },
+      microsoftGrounding: { apiKey: "ms-imported" },
+    },
+  });
+
+  assertEquals(status, 200);
+  assertEquals(await repo.searchConfig.get(), {
+    provider: "microsoft-grounding",
+    tavily: { apiKey: "tvly-imported" },
+    microsoftGrounding: { apiKey: "ms-imported" },
+  });
+});
+
+Deno.test("import replace resets searchConfig to default when the payload omits it", async () => {
+  const { app, repo } = setup();
+
+  await repo.searchConfig.save({
+    provider: "tavily",
+    tavily: { apiKey: "tvly-original" },
+    microsoftGrounding: { apiKey: "ms-original" },
+  });
+
+  const { status } = await doImport(app, "replace", {
+    apiKeys: [],
+    githubAccounts: [],
+    activeGithubAccountId: null,
+    usage: [],
+  });
+
+  assertEquals(status, 200);
+
+  const exported = await doExport(app);
+  assertEquals(exported.data.searchConfig, DEFAULT_SEARCH_CONFIG);
 });
 
 Deno.test("round-trip — double import with replace is idempotent", async () => {

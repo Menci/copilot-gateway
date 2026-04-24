@@ -1,5 +1,6 @@
 import { assertEquals, assertExists, assertFalse } from "@std/assert";
 import type { ResponsesResult } from "../lib/responses-types.ts";
+import type { SearchConfig } from "../data-plane/web-search/types.ts";
 import {
   copilotModels,
   jsonResponse,
@@ -9,6 +10,290 @@ import {
   sseResponse,
   withMockedFetch,
 } from "../test-helpers.ts";
+
+const ENABLED_SEARCH_CONFIG: SearchConfig = {
+  provider: "tavily",
+  tavily: { apiKey: "tvly-test" },
+  microsoftGrounding: { apiKey: "" },
+};
+
+const encodeShimPayloadForTest = (payload: unknown): string => {
+  const json = JSON.stringify(payload);
+  let binary = "";
+  for (const byte of new TextEncoder().encode(json)) {
+    binary += String.fromCharCode(byte);
+  }
+
+  return `cgws1.${
+    btoa(binary).replace(/\+/g, "-").replace(/\//g, "_")
+      .replace(/=+$/g, "")
+  }`;
+};
+
+const encodeWebSearchResultPayloadForTest = (
+  payload: { content: Array<{ type: "text"; text: string }> },
+) => encodeShimPayloadForTest({ content: payload.content });
+
+const encodeWebSearchCitationPayloadForTest = (
+  payload: {
+    search_result_index: number;
+    start_block_index: number;
+    end_block_index: number;
+  },
+) =>
+  encodeShimPayloadForTest({
+    search_result_index: payload.search_result_index,
+    start_block_index: payload.start_block_index,
+    end_block_index: payload.end_block_index,
+  });
+
+const makeWebSearchTool = () => ({
+  type: "web_search_20260209" as const,
+  name: "web_search",
+  max_uses: 2,
+});
+
+const makeAssistantSSE = (
+  messageId: string,
+  contentBlocks: Array<{ event: string; data: Record<string, unknown> }>,
+  stopReason: "end_turn" | "pause_turn" | "tool_use" = "end_turn",
+) =>
+  sseResponse([
+    {
+      event: "message_start",
+      data: {
+        type: "message_start",
+        message: {
+          id: messageId,
+          type: "message",
+          role: "assistant",
+          content: [],
+          model: "claude-native",
+          stop_reason: null,
+          stop_sequence: null,
+          usage: { input_tokens: 10, output_tokens: 0 },
+        },
+      },
+    },
+    ...contentBlocks,
+    {
+      event: "message_delta",
+      data: {
+        type: "message_delta",
+        delta: { stop_reason: stopReason, stop_sequence: null },
+        usage: { output_tokens: 4 },
+      },
+    },
+    { event: "message_stop", data: { type: "message_stop" } },
+  ]);
+
+const textBlock = (text: string) => [
+  {
+    event: "content_block_start",
+    data: {
+      type: "content_block_start",
+      index: 0,
+      content_block: { type: "text", text: "" },
+    },
+  },
+  {
+    event: "content_block_delta",
+    data: {
+      type: "content_block_delta",
+      index: 0,
+      delta: { type: "text_delta", text },
+    },
+  },
+  {
+    event: "content_block_stop",
+    data: { type: "content_block_stop", index: 0 },
+  },
+];
+
+const toolUseBlock = (
+  index: number,
+  id: string,
+  name: string,
+  input: Record<string, unknown>,
+) => [
+  {
+    event: "content_block_start",
+    data: {
+      type: "content_block_start",
+      index,
+      content_block: { type: "tool_use", id, name, input: {} },
+    },
+  },
+  {
+    event: "content_block_delta",
+    data: {
+      type: "content_block_delta",
+      index,
+      delta: {
+        type: "input_json_delta",
+        partial_json: JSON.stringify(input),
+      },
+    },
+  },
+  {
+    event: "content_block_stop",
+    data: { type: "content_block_stop", index },
+  },
+];
+
+const makeNativeSearchReplayMessages = () => [
+  { role: "user", content: "latest React docs" },
+  {
+    role: "assistant",
+    content: [
+      {
+        type: "server_tool_use",
+        id: "srvtoolu_1",
+        name: "web_search",
+        input: { query: "latest React docs" },
+      },
+      {
+        type: "web_search_tool_result",
+        tool_use_id: "srvtoolu_1",
+        content: [{
+          type: "web_search_result",
+          url: "https://react.dev",
+          title: "React",
+          encrypted_content: encodeWebSearchResultPayloadForTest({
+            content: [{ type: "text", text: "Official React documentation" }],
+          }),
+        }],
+      },
+      {
+        type: "text",
+        text: "Use the React docs.",
+        citations: [{
+          type: "web_search_result_location",
+          url: "https://react.dev",
+          title: "React",
+          encrypted_index: encodeWebSearchCitationPayloadForTest({
+            search_result_index: 0,
+            start_block_index: 0,
+            end_block_index: 0,
+          }),
+          cited_text: "Official React documentation",
+        }],
+      },
+    ],
+  },
+];
+
+const makeForeignSearchReplayMessages = () => [
+  { role: "user", content: "latest React docs" },
+  {
+    role: "assistant",
+    content: [
+      {
+        type: "server_tool_use",
+        id: "srvtoolu_foreign",
+        name: "web_search",
+        input: { query: "latest React docs" },
+      },
+      {
+        type: "web_search_tool_result",
+        tool_use_id: "srvtoolu_foreign",
+        content: [{
+          type: "web_search_result",
+          url: "https://react.dev",
+          title: "React",
+          encrypted_content: "foreign.payload",
+        }],
+      },
+    ],
+  },
+];
+
+const makeNativeSearchErrorReplayMessages = () => [
+  { role: "user", content: "latest React docs" },
+  {
+    role: "assistant",
+    content: [
+      {
+        type: "server_tool_use",
+        id: "srvtoolu_1",
+        name: "web_search",
+        input: { query: "latest React docs" },
+      },
+      {
+        type: "web_search_tool_result",
+        tool_use_id: "srvtoolu_1",
+        content: {
+          type: "web_search_tool_result_error",
+          error_code: "too_many_requests",
+        },
+      },
+    ],
+  },
+];
+
+const makeNativeWebSearchUpstreamHandler = (
+  options: {
+    upstreamResponse: Response;
+    searchResponse?: Response;
+    capture?: {
+      upstreamBody?: Record<string, unknown>;
+      upstreamBeta?: string | null;
+      searchBody?: Record<string, unknown>;
+    };
+  },
+) =>
+async (request: Request): Promise<Response> => {
+  const url = new URL(request.url);
+
+  if (url.hostname === "update.code.visualstudio.com") {
+    return jsonResponse(["1.110.1"]);
+  }
+
+  if (url.pathname === "/copilot_internal/v2/token") {
+    return jsonResponse({
+      token: "copilot-access-token",
+      expires_at: 4102444800,
+      refresh_in: 3600,
+    });
+  }
+
+  if (url.pathname === "/models") {
+    return jsonResponse(copilotModels([
+      { id: "claude-native", supported_endpoints: ["/v1/messages"] },
+    ]));
+  }
+
+  if (url.pathname === "/v1/messages") {
+    if (options.capture) {
+      options.capture.upstreamBody = JSON.parse(await request.text());
+      options.capture.upstreamBeta = request.headers.get("anthropic-beta");
+    }
+
+    return options.upstreamResponse;
+  }
+
+  if (url.hostname === "api.tavily.com" && url.pathname === "/search") {
+    if (options.capture) {
+      options.capture.searchBody = JSON.parse(await request.text());
+    }
+
+    return options.searchResponse ?? jsonResponse({
+      results: [{
+        title: "React",
+        url: "https://react.dev",
+        published_date: "2026-04-01",
+        content: "Official React docs",
+      }],
+    });
+  }
+
+  throw new Error(`Unhandled fetch ${request.url}`);
+};
+
+const setupNativeWebSearchRouteTest = () =>
+  setupAppTest({
+    searchConfig: ENABLED_SEARCH_CONFIG,
+  });
 
 Deno.test("/v1/messages malformed JSON returns structured internal debug error", async () => {
   const { apiKey } = await setupAppTest();
@@ -1458,4 +1743,552 @@ Deno.test("stripReservedKeywords handles all-billing system blocks by removing s
 
   assertExists(upstreamBody);
   assertFalse("system" in upstreamBody!);
+});
+
+Deno.test("/v1/messages rewrites native web search to an upstream client tool without renaming web_search and returns pause_turn", async () => {
+  const { apiKey } = await setupNativeWebSearchRouteTest();
+  const capture: {
+    upstreamBody?: Record<string, unknown>;
+    upstreamBeta?: string | null;
+    searchBody?: Record<string, unknown>;
+  } = {};
+
+  await withMockedFetch(
+    makeNativeWebSearchUpstreamHandler({
+      capture,
+      upstreamResponse: makeAssistantSSE(
+        "msg_native_search",
+        [
+          ...toolUseBlock(0, "toolu_1", "web_search", {
+            query: "latest React docs",
+          }),
+        ],
+      ),
+    }),
+    async () => {
+      const response = await requestApp("/v1/messages", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-api-key": apiKey.key,
+        },
+        body: JSON.stringify({
+          model: "claude-native",
+          max_tokens: 64,
+          stream: false,
+          tools: [makeWebSearchTool()],
+          tool_choice: { type: "tool", name: "web_search" },
+          messages: [{ role: "user", content: "latest React docs" }],
+        }),
+      });
+
+      assertEquals(response.status, 200);
+      const body = await response.json();
+      assertEquals(body.id, "msg_native_search");
+      assertEquals(body.stop_reason, "pause_turn");
+      assertEquals(body.content[0].type, "server_tool_use");
+      assertEquals(body.content[1].type, "web_search_tool_result");
+      assertEquals(body.usage.server_tool_use.web_search_requests, 1);
+    },
+  );
+
+  assertExists(capture.upstreamBody);
+  assertEquals(
+    (capture.upstreamBody!.tools as Array<Record<string, unknown>>)[0].name,
+    "web_search",
+  );
+  assertEquals(
+    (capture.upstreamBody!.tools as Array<Record<string, unknown>>)[0]
+      .description,
+    "The web_search tool searches the internet and returns up-to-date information from web sources.",
+  );
+  assertEquals(
+    (capture.upstreamBody!.tools as Array<Record<string, unknown>>)[0]
+      .input_schema,
+    {
+      type: "object",
+      properties: {
+        query: {
+          type: "string",
+          description: "Search query",
+        },
+      },
+      required: ["query"],
+    },
+  );
+  assertEquals(capture.upstreamBody!.tool_choice, {
+    type: "tool",
+    name: "web_search",
+  });
+  assertEquals(capture.searchBody?.query, "latest React docs");
+});
+
+Deno.test("/v1/messages keeps tool_use when native web search shares a turn with client tools", async () => {
+  const { apiKey } = await setupNativeWebSearchRouteTest();
+  const capture: {
+    upstreamBody?: Record<string, unknown>;
+    upstreamBeta?: string | null;
+    searchBody?: Record<string, unknown>;
+  } = {};
+
+  await withMockedFetch(
+    makeNativeWebSearchUpstreamHandler({
+      capture,
+      upstreamResponse: makeAssistantSSE(
+        "msg_mixed_tools",
+        [
+          ...toolUseBlock(0, "toolu_1", "web_search", {
+            query: "latest React docs",
+          }),
+          ...toolUseBlock(1, "toolu_2", "calc", { expression: "2+2" }),
+        ],
+        "tool_use",
+      ),
+    }),
+    async () => {
+      const response = await requestApp("/v1/messages", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-api-key": apiKey.key,
+        },
+        body: JSON.stringify({
+          model: "claude-native",
+          max_tokens: 64,
+          stream: false,
+          tools: [
+            makeWebSearchTool(),
+            {
+              name: "calc",
+              description: "calculator",
+              input_schema: { type: "object" },
+            },
+          ],
+          messages: [{
+            role: "user",
+            content: "latest React docs and add 2+2",
+          }],
+        }),
+      });
+
+      assertEquals(response.status, 200);
+      const body = await response.json();
+      assertEquals(body.stop_reason, "tool_use");
+      assertEquals(
+        body.content.some((block: { type: string }) =>
+          block.type === "server_tool_use"
+        ),
+        true,
+      );
+      assertEquals(
+        body.content.some((block: { type: string }) =>
+          block.type === "tool_use"
+        ),
+        true,
+      );
+    },
+  );
+
+  assertExists(capture.upstreamBody);
+  assertEquals(
+    (capture.upstreamBody!.tools as Array<Record<string, unknown>>).map((
+      tool,
+    ) => tool.name),
+    ["web_search", "calc"],
+  );
+  assertEquals(capture.searchBody?.query, "latest React docs");
+});
+
+Deno.test("/v1/messages returns internal debug error when native web search is disabled in config", async () => {
+  const { apiKey } = await setupAppTest({
+    searchConfig: {
+      provider: "disabled",
+      tavily: { apiKey: "" },
+      microsoftGrounding: { apiKey: "" },
+    },
+  });
+
+  await withMockedFetch(async (request) => {
+    const url = new URL(request.url);
+
+    if (url.hostname === "update.code.visualstudio.com") {
+      return jsonResponse(["1.110.1"]);
+    }
+    if (url.pathname === "/copilot_internal/v2/token") {
+      return jsonResponse({
+        token: "copilot-access-token",
+        expires_at: 4102444800,
+        refresh_in: 3600,
+      });
+    }
+    if (url.pathname === "/models") {
+      return jsonResponse(copilotModels([
+        { id: "claude-native", supported_endpoints: ["/v1/messages"] },
+      ]));
+    }
+
+    throw new Error(`Unexpected fetch ${request.url}`);
+  }, async () => {
+    const response = await requestApp("/v1/messages", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": apiKey.key,
+      },
+      body: JSON.stringify({
+        model: "claude-native",
+        max_tokens: 64,
+        stream: false,
+        tools: [makeWebSearchTool()],
+        messages: [{ role: "user", content: "latest React docs" }],
+      }),
+    });
+
+    assertEquals(response.status, 500);
+    const body = await response.json();
+    assertEquals(body.error.type, "internal_error");
+    assertEquals(body.error.source_api, "messages");
+    assertEquals(
+      body.error.message,
+      "Native Messages web search requires an enabled search provider.",
+    );
+    assertExists(body.error.stack);
+  });
+});
+
+Deno.test("/v1/messages decodes our native-looking replay into upstream search_result history", async () => {
+  const { apiKey } = await setupNativeWebSearchRouteTest();
+  const capture: {
+    upstreamBody?: Record<string, unknown>;
+    upstreamBeta?: string | null;
+  } = {};
+
+  await withMockedFetch(
+    makeNativeWebSearchUpstreamHandler({
+      capture,
+      upstreamResponse: makeAssistantSSE(
+        "msg_replay_decoded",
+        [...textBlock("Replay accepted.")],
+      ),
+    }),
+    async () => {
+      const response = await requestApp("/v1/messages", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-api-key": apiKey.key,
+        },
+        body: JSON.stringify({
+          model: "claude-native",
+          max_tokens: 64,
+          stream: false,
+          messages: makeNativeSearchReplayMessages(),
+        }),
+      });
+
+      assertEquals(response.status, 200);
+      const body = await response.json();
+      assertEquals(body.content[0].text, "Replay accepted.");
+    },
+  );
+
+  assertExists(capture.upstreamBody);
+  const messages = capture.upstreamBody!.messages as Array<
+    Record<string, unknown>
+  >;
+  assertEquals(messages.length, 3);
+  const replayAssistantContent = messages[1].content as Array<
+    Record<string, unknown>
+  >;
+  assertEquals(replayAssistantContent[0].type, "tool_use");
+  assertEquals(
+    ((replayAssistantContent[1] as { citations?: Array<{ type?: string }> })
+      .citations?.[0])
+      ?.type,
+    "search_result_location",
+  );
+  assertEquals(
+    ((messages[2].content as Array<Record<string, unknown>>)[0] as Record<
+      string,
+      unknown
+    >).type,
+    "tool_result",
+  );
+});
+
+Deno.test("/v1/messages leaves native-looking replay errors untouched even when native web search stays enabled", async () => {
+  const { apiKey } = await setupNativeWebSearchRouteTest();
+  const capture: { upstreamBody?: Record<string, unknown> } = {};
+
+  await withMockedFetch(
+    makeNativeWebSearchUpstreamHandler({
+      capture,
+      upstreamResponse: makeAssistantSSE(
+        "msg_replay_error_passthrough",
+        [...textBlock("Replay error passthrough accepted.")],
+      ),
+    }),
+    async () => {
+      const response = await requestApp("/v1/messages", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-api-key": apiKey.key,
+        },
+        body: JSON.stringify({
+          model: "claude-native",
+          max_tokens: 64,
+          stream: false,
+          tools: [makeWebSearchTool()],
+          messages: [
+            ...makeNativeSearchErrorReplayMessages(),
+            { role: "user", content: "What happened?" },
+          ],
+        }),
+      });
+
+      assertEquals(response.status, 200);
+      const body = await response.json();
+      assertEquals(body.content[0].text, "Replay error passthrough accepted.");
+    },
+  );
+
+  assertExists(capture.upstreamBody);
+  const messages = capture.upstreamBody!.messages as Array<
+    Record<string, unknown>
+  >;
+  const replayAssistantContent = messages[1].content as Array<
+    Record<string, unknown>
+  >;
+  assertEquals(replayAssistantContent[0].type, "server_tool_use");
+  assertEquals(replayAssistantContent[1].type, "web_search_tool_result");
+  assertEquals(
+    (replayAssistantContent[1].content as Record<string, unknown>).type,
+    "web_search_tool_result_error",
+  );
+});
+
+Deno.test("/v1/messages passes through foreign native-looking history and preserves upstream 400", async () => {
+  const { apiKey } = await setupAppTest();
+  const capture: { upstreamBody?: Record<string, unknown> } = {};
+  const upstreamError = {
+    error: {
+      type: "invalid_request_error",
+      message: "foreign native history rejected",
+    },
+  };
+
+  await withMockedFetch(async (request) => {
+    const url = new URL(request.url);
+
+    if (url.hostname === "update.code.visualstudio.com") {
+      return jsonResponse(["1.110.1"]);
+    }
+    if (url.pathname === "/copilot_internal/v2/token") {
+      return jsonResponse({
+        token: "copilot-access-token",
+        expires_at: 4102444800,
+        refresh_in: 3600,
+      });
+    }
+    if (url.pathname === "/models") {
+      return jsonResponse(copilotModels([
+        { id: "claude-native", supported_endpoints: ["/v1/messages"] },
+      ]));
+    }
+    if (url.pathname === "/v1/messages") {
+      capture.upstreamBody = JSON.parse(await request.text());
+      return jsonResponse(upstreamError, 400);
+    }
+
+    throw new Error(`Unexpected fetch ${request.url}`);
+  }, async () => {
+    const response = await requestApp("/v1/messages", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": apiKey.key,
+      },
+      body: JSON.stringify({
+        model: "claude-native",
+        max_tokens: 64,
+        stream: false,
+        messages: makeForeignSearchReplayMessages(),
+      }),
+    });
+
+    assertEquals(response.status, 400);
+    assertEquals(await response.json(), upstreamError);
+  });
+
+  assertExists(capture.upstreamBody);
+  const foreignAssistantContent =
+    (capture.upstreamBody!.messages as Array<Record<string, unknown>>)[1]
+      .content as Array<Record<string, unknown>>;
+  assertEquals(foreignAssistantContent[0].type, "server_tool_use");
+});
+
+Deno.test("/v1/messages rejects duplicate native web search tools before upstream fetch", async () => {
+  const { apiKey } = await setupAppTest();
+
+  await withMockedFetch(async (request) => {
+    const url = new URL(request.url);
+
+    if (url.hostname === "update.code.visualstudio.com") {
+      return jsonResponse(["1.110.1"]);
+    }
+    if (url.pathname === "/copilot_internal/v2/token") {
+      return jsonResponse({
+        token: "copilot-access-token",
+        expires_at: 4102444800,
+        refresh_in: 3600,
+      });
+    }
+    if (url.pathname === "/models") {
+      return jsonResponse(copilotModels([
+        { id: "claude-native", supported_endpoints: ["/v1/messages"] },
+      ]));
+    }
+
+    throw new Error(`Unexpected fetch ${request.url}`);
+  }, async () => {
+    const response = await requestApp("/v1/messages", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": apiKey.key,
+      },
+      body: JSON.stringify({
+        model: "claude-native",
+        max_tokens: 64,
+        stream: false,
+        tools: [
+          { type: "web_search_20250305" },
+          { type: "web_search_20260209" },
+        ],
+        messages: [{ role: "user", content: "latest React docs" }],
+      }),
+    });
+
+    assertEquals(response.status, 400);
+    assertEquals(await response.json(), {
+      type: "error",
+      error: {
+        type: "invalid_request_error",
+        message:
+          "Only one native web search tool definition is supported per request.",
+      },
+    });
+  });
+});
+
+Deno.test("/v1/messages rejects native web search tools whose name is not web_search", async () => {
+  const { apiKey } = await setupAppTest();
+
+  await withMockedFetch(async (request) => {
+    const url = new URL(request.url);
+
+    if (url.hostname === "update.code.visualstudio.com") {
+      return jsonResponse(["1.110.1"]);
+    }
+    if (url.pathname === "/copilot_internal/v2/token") {
+      return jsonResponse({
+        token: "copilot-access-token",
+        expires_at: 4102444800,
+        refresh_in: 3600,
+      });
+    }
+    if (url.pathname === "/models") {
+      return jsonResponse(copilotModels([
+        { id: "claude-native", supported_endpoints: ["/v1/messages"] },
+      ]));
+    }
+
+    throw new Error(`Unexpected fetch ${request.url}`);
+  }, async () => {
+    const response = await requestApp("/v1/messages", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": apiKey.key,
+      },
+      body: JSON.stringify({
+        model: "claude-native",
+        max_tokens: 64,
+        stream: false,
+        tools: [
+          { type: "web_search_20260209", name: "WebSearch" },
+        ],
+        messages: [{ role: "user", content: "latest React docs" }],
+      }),
+    });
+
+    assertEquals(response.status, 400);
+    assertEquals(await response.json(), {
+      type: "error",
+      error: {
+        type: "invalid_request_error",
+        message:
+          "tools.0.web_search_20260209.name: Input should be 'web_search'",
+      },
+    });
+  });
+});
+
+Deno.test("/v1/messages rejects native web search tool name collisions before upstream fetch", async () => {
+  const { apiKey } = await setupAppTest();
+
+  await withMockedFetch(async (request) => {
+    const url = new URL(request.url);
+
+    if (url.hostname === "update.code.visualstudio.com") {
+      return jsonResponse(["1.110.1"]);
+    }
+    if (url.pathname === "/copilot_internal/v2/token") {
+      return jsonResponse({
+        token: "copilot-access-token",
+        expires_at: 4102444800,
+        refresh_in: 3600,
+      });
+    }
+    if (url.pathname === "/models") {
+      return jsonResponse(copilotModels([
+        { id: "claude-native", supported_endpoints: ["/v1/messages"] },
+      ]));
+    }
+
+    throw new Error(`Unexpected fetch ${request.url}`);
+  }, async () => {
+    const response = await requestApp("/v1/messages", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": apiKey.key,
+      },
+      body: JSON.stringify({
+        model: "claude-native",
+        max_tokens: 64,
+        stream: false,
+        tools: [
+          makeWebSearchTool(),
+          {
+            name: "web_search",
+            description: "user-defined tool",
+            input_schema: { type: "object" },
+          },
+        ],
+        messages: [{ role: "user", content: "latest React docs" }],
+      }),
+    });
+
+    assertEquals(response.status, 400);
+    assertEquals(await response.json(), {
+      type: "error",
+      error: {
+        type: "invalid_request_error",
+        message:
+          "Native web search tool name collides with another client tool: web_search.",
+      },
+    });
+  });
 });

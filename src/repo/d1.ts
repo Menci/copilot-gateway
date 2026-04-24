@@ -5,6 +5,7 @@ import type {
   GitHubAccount,
   GitHubRepo,
   Repo,
+  SearchConfigRepo,
   UsageRecord,
   UsageRepo,
 } from "./types.ts";
@@ -26,6 +27,11 @@ interface D1PreparedStatement {
 export interface D1Database {
   prepare(query: string): D1PreparedStatement;
 }
+
+const SEARCH_CONFIG_KEY = "search_config";
+
+const serializeStoredConfig = (value: unknown): string =>
+  JSON.stringify(value === undefined ? null : value);
 
 class D1ApiKeyRepo implements ApiKeyRepo {
   constructor(private db: D1Database) {}
@@ -391,16 +397,49 @@ class D1CacheRepo implements CacheRepo {
   }
 }
 
+class D1SearchConfigRepo implements SearchConfigRepo {
+  constructor(private db: D1Database) {}
+
+  async get(): Promise<unknown | null> {
+    const row = await this.db
+      .prepare("SELECT value FROM config WHERE key = ?")
+      .bind(SEARCH_CONFIG_KEY)
+      .first<{ value: string }>();
+
+    if (!row?.value) {
+      return null;
+    }
+
+    try {
+      return JSON.parse(row.value);
+    } catch {
+      return null;
+    }
+  }
+
+  async save(config: unknown): Promise<void> {
+    await this.db
+      .prepare(
+        `INSERT INTO config (key, value) VALUES (?, ?)
+         ON CONFLICT (key) DO UPDATE SET value = excluded.value`,
+      )
+      .bind(SEARCH_CONFIG_KEY, serializeStoredConfig(config))
+      .run();
+  }
+}
+
 export class D1Repo implements Repo {
   apiKeys: ApiKeyRepo;
   github: GitHubRepo;
   usage: UsageRepo;
   cache: CacheRepo;
+  searchConfig: SearchConfigRepo;
 
   constructor(db: D1Database) {
     this.apiKeys = new D1ApiKeyRepo(db);
     this.github = new D1GitHubRepo(db);
     this.usage = new D1UsageRepo(db);
     this.cache = new D1CacheRepo(db);
+    this.searchConfig = new D1SearchConfigRepo(db);
   }
 }

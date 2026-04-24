@@ -7,6 +7,7 @@ import type {
   GitHubAccount,
   GitHubRepo,
   Repo,
+  SearchConfigRepo,
   UsageRecord,
   UsageRepo,
 } from "./types.ts";
@@ -204,16 +205,33 @@ class MemoryCacheRepo implements CacheRepo {
   }
 }
 
+class MemorySearchConfigRepo implements SearchConfigRepo {
+  private config: unknown | null = null;
+
+  get(): Promise<unknown | null> {
+    return Promise.resolve(
+      this.config === null ? null : structuredClone(this.config),
+    );
+  }
+
+  save(config: unknown): Promise<void> {
+    this.config = config === undefined ? null : structuredClone(config);
+    return Promise.resolve();
+  }
+}
+
 export class InMemoryRepo implements Repo {
   apiKeys: ApiKeyRepo;
   github: GitHubRepo;
   usage: UsageRepo;
   cache: CacheRepo;
+  searchConfig: SearchConfigRepo;
 
   constructor() {
     this.apiKeys = new MemoryApiKeyRepo();
     this.github = new MemoryGitHubRepo();
     this.usage = new MemoryUsageRepo();
     this.cache = new MemoryCacheRepo();
+    this.searchConfig = new MemorySearchConfigRepo();
   }
 }

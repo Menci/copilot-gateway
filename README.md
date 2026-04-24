@@ -87,6 +87,22 @@ wrangler deploy
 4. The **API Keys** tab shows ready-to-copy configuration snippets for both
    Claude Code and Codex CLI
 
+### Optional Native Messages Web Search
+
+Anthropic-native-looking web search is available only on `/v1/messages` and
+`/messages` when the request stays on the native Messages target.
+
+Configure it in the dashboard under **Upstream -> Search**.
+
+Provider choices:
+
+- `disabled`
+- `tavily`
+- `microsoft-grounding`
+
+The gateway stores this search config in its control-plane data, not env vars,
+and includes it in export/import.
+
 ## Architecture
 
 ```

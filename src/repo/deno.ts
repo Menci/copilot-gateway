@@ -5,9 +5,12 @@ import type {
   GitHubAccount,
   GitHubRepo,
   Repo,
+  SearchConfigRepo,
   UsageRecord,
   UsageRepo,
 } from "./types.ts";
+
+const SEARCH_CONFIG_KEY: Deno.KvKey = ["config", "search_config"];
 
 class DenoKvApiKeyRepo implements ApiKeyRepo {
   constructor(private kv: Deno.Kv) {}
@@ -277,11 +280,28 @@ class DenoKvCacheRepo implements CacheRepo {
   }
 
   async set(key: string, value: string, ttlMs?: number): Promise<void> {
-    await this.kv.set(["cache", key], value, ttlMs ? { expireIn: ttlMs } : undefined);
+    await this.kv.set(
+      ["cache", key],
+      value,
+      ttlMs ? { expireIn: ttlMs } : undefined,
+    );
   }
 
   async delete(key: string): Promise<void> {
     await this.kv.delete(["cache", key]);
+  }
+}
+
+class DenoKvSearchConfigRepo implements SearchConfigRepo {
+  constructor(private kv: Deno.Kv) {}
+
+  async get(): Promise<unknown | null> {
+    const entry = await this.kv.get(SEARCH_CONFIG_KEY);
+    return entry.value === undefined ? null : entry.value;
+  }
+
+  async save(config: unknown): Promise<void> {
+    await this.kv.set(SEARCH_CONFIG_KEY, config === undefined ? null : config);
   }
 }
 
@@ -290,11 +310,13 @@ export class DenoKvRepo implements Repo {
   github: GitHubRepo;
   usage: UsageRepo;
   cache: CacheRepo;
+  searchConfig: SearchConfigRepo;
 
   constructor(kv: Deno.Kv) {
     this.apiKeys = new DenoKvApiKeyRepo(kv);
     this.github = new DenoKvGitHubRepo(kv);
     this.usage = new DenoKvUsageRepo(kv);
     this.cache = new DenoKvCacheRepo(kv);
+    this.searchConfig = new DenoKvSearchConfigRepo(kv);
   }
 }

@@ -73,9 +73,15 @@ export interface CacheRepo {
   delete(key: string): Promise<void>;
 }
 
+export interface SearchConfigRepo {
+  get(): Promise<unknown | null>;
+  save(config: unknown): Promise<void>;
+}
+
 export interface Repo {
   apiKeys: ApiKeyRepo;
   github: GitHubRepo;
   usage: UsageRepo;
   cache: CacheRepo;
+  searchConfig: SearchConfigRepo;
 }

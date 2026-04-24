@@ -9,21 +9,32 @@ import { copilotQuota } from "./routes/copilot-quota.ts";
 import { serveResponses } from "./data-plane/sources/responses/serve.ts";
 import { countTokens } from "./routes/count-tokens.ts";
 import {
+  authGithub,
+  authGithubDisconnect,
+  authGithubPoll,
+  authGithubSwitch,
   authLogin,
   authLogout,
-  authGithub,
-  authGithubPoll,
-  authGithubDisconnect,
-  authGithubSwitch,
   authMe,
 } from "./routes/auth.ts";
-import { authMiddleware, adminOnlyMiddleware } from "./middleware/auth.ts";
+import { adminOnlyMiddleware, authMiddleware } from "./middleware/auth.ts";
 import { usageMiddleware } from "./middleware/usage.ts";
 import { LoginPage } from "./ui/login.tsx";
 import { DashboardPage } from "./ui/dashboard.tsx";
-import { listKeys, createKey, deleteKey, rotateKey, renameKey } from "./routes/api-keys.ts";
+import {
+  createKey,
+  deleteKey,
+  listKeys,
+  renameKey,
+  rotateKey,
+} from "./routes/api-keys.ts";
 import { tokenUsage } from "./routes/token-usage.ts";
 import { exportData, importData } from "./routes/data-transfer.ts";
+import {
+  getSearchConfigRoute,
+  putSearchConfigRoute,
+  testSearchConfigRoute,
+} from "./routes/search-config.ts";
 
 export const app = new Hono();
 
@@ -65,6 +76,9 @@ adminApi.post("/keys", createKey);
 adminApi.post("/keys/:id/rotate", rotateKey);
 adminApi.patch("/keys/:id", renameKey);
 adminApi.delete("/keys/:id", deleteKey);
+adminApi.get("/search-config", getSearchConfigRoute);
+adminApi.put("/search-config", putSearchConfigRoute);
+adminApi.post("/search-config/test", testSearchConfigRoute);
 adminApi.get("/export", exportData);
 adminApi.post("/import", importData);
 app.route("/api", adminApi);

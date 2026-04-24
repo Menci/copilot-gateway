@@ -1,6 +1,8 @@
 // Data transfer routes — export/import all database data as JSON
 
 import type { Context } from "hono";
+import { normalizeSearchConfig } from "../data-plane/web-search/search-config.ts";
+import type { SearchConfig } from "../data-plane/web-search/types.ts";
 import { getRepo } from "../repo/index.ts";
 import type { ApiKey, GitHubAccount, UsageRecord } from "../repo/types.ts";
 
@@ -12,6 +14,7 @@ interface ExportPayload {
     githubAccounts: GitHubAccount[];
     activeGithubAccountId: number | null;
     usage: UsageRecord[];
+    searchConfig: SearchConfig;
   };
 }
 
@@ -19,18 +22,30 @@ interface ExportPayload {
 export const exportData = async (c: Context) => {
   const repo = getRepo();
 
-  const [apiKeys, githubAccounts, activeGithubAccountId, usage] =
-    await Promise.all([
-      repo.apiKeys.list(),
-      repo.github.listAccounts(),
-      repo.github.getActiveId(),
-      repo.usage.listAll(),
-    ]);
+  const [
+    apiKeys,
+    githubAccounts,
+    activeGithubAccountId,
+    usage,
+    rawSearchConfig,
+  ] = await Promise.all([
+    repo.apiKeys.list(),
+    repo.github.listAccounts(),
+    repo.github.getActiveId(),
+    repo.usage.listAll(),
+    repo.searchConfig.get(),
+  ]);
 
   const payload: ExportPayload = {
     version: 1,
     exportedAt: new Date().toISOString(),
-    data: { apiKeys, githubAccounts, activeGithubAccountId, usage },
+    data: {
+      apiKeys,
+      githubAccounts,
+      activeGithubAccountId,
+      usage,
+      searchConfig: normalizeSearchConfig(rawSearchConfig),
+    },
   };
 
   return c.json(payload);
@@ -51,9 +66,13 @@ export const importData = async (c: Context) => {
 
   const repo = getRepo();
   const apiKeys: ApiKey[] = Array.isArray(data.apiKeys) ? data.apiKeys : [];
-  const githubAccounts: GitHubAccount[] = Array.isArray(data.githubAccounts) ? data.githubAccounts : [];
+  const githubAccounts: GitHubAccount[] = Array.isArray(data.githubAccounts)
+    ? data.githubAccounts
+    : [];
   const usage: UsageRecord[] = Array.isArray(data.usage) ? data.usage : [];
-  const activeId: number | null = typeof data.activeGithubAccountId === "number" ? data.activeGithubAccountId : null;
+  const activeId: number | null = typeof data.activeGithubAccountId === "number"
+    ? data.activeGithubAccountId
+    : null;
 
   if (mode === "replace") {
     await Promise.all([
@@ -61,6 +80,7 @@ export const importData = async (c: Context) => {
       repo.github.deleteAllAccounts(),
       repo.usage.deleteAll(),
     ]);
+    await repo.searchConfig.save(normalizeSearchConfig(data.searchConfig));
   }
 
   // Import API keys
@@ -89,6 +109,14 @@ export const importData = async (c: Context) => {
         await repo.github.setActiveId(activeId);
       }
     }
+  }
+
+  if (
+    mode !== "replace" &&
+    typeof data.searchConfig === "object" &&
+    data.searchConfig !== null
+  ) {
+    await repo.searchConfig.save(normalizeSearchConfig(data.searchConfig));
   }
 
   return c.json({

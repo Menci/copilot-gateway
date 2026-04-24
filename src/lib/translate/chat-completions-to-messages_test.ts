@@ -751,9 +751,13 @@ Deno.test("tools translated correctly", async () => {
   }));
   assertExists(result.tools);
   assertEquals(result.tools!.length, 1);
-  assertEquals(result.tools![0].name, "get_weather");
-  assertEquals(result.tools![0].description, "Get weather");
-  assertEquals(result.tools![0].input_schema, {
+  const [tool] = result.tools!;
+  if (!("input_schema" in tool)) {
+    throw new Error("expected translated client tool");
+  }
+  assertEquals(tool.name, "get_weather");
+  assertEquals(tool.description, "Get weather");
+  assertEquals(tool.input_schema, {
     type: "object",
     properties: { city: { type: "string" } },
   });

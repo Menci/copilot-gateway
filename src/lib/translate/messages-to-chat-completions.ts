@@ -9,6 +9,7 @@ import type {
 import type {
   MessagesAssistantContentBlock,
   MessagesAssistantMessage,
+  MessagesClientTool,
   MessagesMessage,
   MessagesPayload,
   MessagesRedactedThinkingBlock,
@@ -55,6 +56,34 @@ const toChatCompletionsContent = (
   return parts;
 };
 
+const toChatCompletionsToolResultContent = (
+  content: MessagesToolResultBlock["content"],
+): string => {
+  if (typeof content === "string") {
+    return content;
+  }
+
+  const textBlocks = content.filter((block): block is MessagesTextBlock =>
+    block.type === "text"
+  );
+  if (textBlocks.length === content.length) {
+    return textBlocks.map((block) => block.text).join("\n\n");
+  }
+
+  return JSON.stringify(content);
+};
+
+const getClientTools = (
+  tools?: MessagesPayload["tools"],
+): MessagesClientTool[] | undefined => {
+  if (!tools) return undefined;
+
+  const clientTools = tools.filter((tool): tool is MessagesClientTool =>
+    tool.type === undefined || tool.type === "custom"
+  );
+  return clientTools.length > 0 ? clientTools : undefined;
+};
+
 const translateMessagesUser = (message: MessagesUserMessage): Message[] => {
   if (!Array.isArray(message.content)) {
     return [{ role: "user", content: toChatCompletionsContent(message.content) }];
@@ -70,7 +99,7 @@ const translateMessagesUser = (message: MessagesUserMessage): Message[] => {
     messages.push({
       role: "tool",
       tool_call_id: toolResult.tool_use_id,
-      content: toChatCompletionsContent(toolResult.content),
+      content: toChatCompletionsToolResultContent(toolResult.content),
     });
   }
 
@@ -103,8 +132,16 @@ const translateMessagesAssistant = (
   const thinkingBlocks = message.content.filter((block): block is MessagesThinkingBlock =>
     block.type === "thinking"
   );
+  const preservedUnsupportedHistory = message.content.filter((block) =>
+    block.type === "server_tool_use" || block.type === "web_search_tool_result"
+  );
 
-  const content = textBlocks.map((block) => block.text).join("\n\n") || null;
+  const content = [
+    textBlocks.map((block) => block.text).join("\n\n"),
+    preservedUnsupportedHistory.length > 0
+      ? JSON.stringify(preservedUnsupportedHistory)
+      : "",
+  ].filter((chunk) => chunk.length > 0).join("\n\n") || null;
   const reasoningText = thinkingBlocks.map((block) => block.thinking).join("\n\n") || null;
   const reasoningOpaque = thinkingBlocks.find((block) => block.signature)?.signature ?? null;
   const baseMessage = {
@@ -153,7 +190,7 @@ const translateMessagesInput = (
 };
 
 const translateMessagesTools = (
-  tools?: MessagesPayload["tools"],
+  tools?: MessagesClientTool[],
 ): Tool[] | undefined =>
   tools?.map((tool) => ({
     type: "function",
@@ -167,8 +204,11 @@ const translateMessagesTools = (
 
 const translateMessagesToolChoice = (
   toolChoice?: MessagesPayload["tool_choice"],
+  tools?: MessagesClientTool[],
 ): ChatCompletionsPayload["tool_choice"] => {
-  if (!toolChoice) return undefined;
+  if (!toolChoice || !tools || tools.length === 0) return undefined;
+
+  const toolNames = new Set(tools.map((tool) => tool.name));
 
   switch (toolChoice.type) {
     case "auto":
@@ -176,7 +216,7 @@ const translateMessagesToolChoice = (
     case "any":
       return "required";
     case "tool":
-      return toolChoice.name
+      return toolChoice.name && toolNames.has(toolChoice.name)
         ? { type: "function", function: { name: toolChoice.name } }
         : undefined;
     case "none":
@@ -188,19 +228,23 @@ const translateMessagesToolChoice = (
 
 export const translateMessagesToChatCompletions = (
   payload: MessagesPayload,
-): ChatCompletionsPayload => ({
-  model: payload.model,
-  messages: translateMessagesInput(payload.messages, payload.system),
-  max_tokens: payload.max_tokens,
-  stop: payload.stop_sequences,
-  stream: payload.stream,
-  ...(payload.stream ? { stream_options: { include_usage: true } } : {}),
-  temperature: payload.temperature,
-  top_p: payload.top_p,
-  user: payload.metadata?.user_id,
-  tools: translateMessagesTools(payload.tools),
-  tool_choice: translateMessagesToolChoice(payload.tool_choice),
-});
+): ChatCompletionsPayload => {
+  const clientTools = getClientTools(payload.tools);
+
+  return {
+    model: payload.model,
+    messages: translateMessagesInput(payload.messages, payload.system),
+    max_tokens: payload.max_tokens,
+    stop: payload.stop_sequences,
+    stream: payload.stream,
+    ...(payload.stream ? { stream_options: { include_usage: true } } : {}),
+    temperature: payload.temperature,
+    top_p: payload.top_p,
+    user: payload.metadata?.user_id,
+    tools: translateMessagesTools(clientTools),
+    tool_choice: translateMessagesToolChoice(payload.tool_choice, clientTools),
+  };
+};
 
 export const mapMessagesStopReasonToChatCompletionsFinishReason = (
   stopReason: MessagesResponse["stop_reason"],
@@ -225,6 +269,7 @@ export const translateMessagesToChatCompletionsResponse = (
 ): ChatCompletionResponse => {
   const textParts: string[] = [];
   const toolCalls: ToolCall[] = [];
+  const preservedUnsupportedHistory: MessagesAssistantContentBlock[] = [];
   let reasoningText: string | undefined;
   let reasoningOpaque: string | undefined;
 
@@ -254,7 +299,15 @@ export const translateMessagesToChatCompletionsResponse = (
           reasoningOpaque = (block as MessagesRedactedThinkingBlock).data;
         }
         break;
+      case "server_tool_use":
+      case "web_search_tool_result":
+        preservedUnsupportedHistory.push(block);
+        break;
     }
+  }
+
+  if (preservedUnsupportedHistory.length > 0) {
+    textParts.push(JSON.stringify(preservedUnsupportedHistory));
   }
 
   const promptTokens =

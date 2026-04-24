@@ -1,5 +1,12 @@
 import { assertEquals, assertExists } from "@std/assert";
-import { requestApp, setupAppTest } from "./test-helpers.ts";
+import { DEFAULT_SEARCH_CONFIG } from "./data-plane/web-search/search-config.ts";
+import {
+  copilotModels,
+  jsonResponse,
+  requestApp,
+  setupAppTest,
+  withMockedFetch,
+} from "./test-helpers.ts";
 
 Deno.test("admin key is limited to control plane routes", async () => {
   const { adminKey } = await setupAppTest();
@@ -15,6 +22,42 @@ Deno.test("admin key is limited to control plane routes", async () => {
   assertEquals(modelsResponse.status, 403);
   assertEquals(await modelsResponse.json(), {
     error: "This key is for dashboard only. Create an API key for API access.",
+  });
+});
+
+Deno.test("admin key can access playground-approved data plane routes with x-models-playground", async () => {
+  const { adminKey } = await setupAppTest();
+
+  await withMockedFetch(async (request) => {
+    const url = new URL(request.url);
+
+    if (url.hostname === "update.code.visualstudio.com") {
+      return jsonResponse(["1.110.1"]);
+    }
+
+    if (url.pathname === "/copilot_internal/v2/token") {
+      return jsonResponse({
+        token: "copilot-access-token",
+        expires_at: 4102444800,
+        refresh_in: 3600,
+      });
+    }
+
+    if (url.pathname === "/models") {
+      return jsonResponse(copilotModels([{ id: "claude-test" }]));
+    }
+
+    throw new Error(`Unhandled fetch ${request.url}`);
+  }, async () => {
+    const response = await requestApp("/v1/models", {
+      headers: {
+        "x-api-key": adminKey,
+        "x-models-playground": "1",
+      },
+    });
+
+    assertEquals(response.status, 200);
+    assertEquals((await response.json()).data[0].id, "claude-test");
   });
 });
 
@@ -44,6 +87,22 @@ Deno.test("API key users cannot call admin-only key mutation routes", async () =
   const response = await requestApp(`/api/keys/${apiKey.id}/rotate`, {
     method: "POST",
     headers: { "x-api-key": apiKey.key },
+  });
+
+  assertEquals(response.status, 403);
+  assertEquals(await response.json(), { error: "Dashboard key required" });
+});
+
+Deno.test("API key users cannot mutate /api/search-config routes", async () => {
+  const { apiKey } = await setupAppTest();
+
+  const response = await requestApp("/api/search-config", {
+    method: "PUT",
+    headers: {
+      "content-type": "application/json",
+      "x-api-key": apiKey.key,
+    },
+    body: JSON.stringify(DEFAULT_SEARCH_CONFIG),
   });
 
   assertEquals(response.status, 403);

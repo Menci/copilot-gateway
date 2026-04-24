@@ -1,11 +1,13 @@
 import {
   MESSAGES_THINKING_PLACEHOLDER,
+  type MessagesAssistantContentBlock,
   type MessagesAssistantMessage,
+  type MessagesClientTool,
   type MessagesMessage,
   type MessagesPayload,
   type MessagesResponse,
   type MessagesTextBlock,
-  type MessagesTool,
+  type MessagesToolResultBlock,
   type MessagesUserContentBlock,
   type MessagesUserMessage,
 } from "../messages-types.ts";
@@ -49,6 +51,34 @@ const translateUserContentBlock = (
   };
 };
 
+const toResponsesToolResultOutput = (
+  content: MessagesToolResultBlock["content"],
+): string => {
+  if (typeof content === "string") {
+    return content;
+  }
+
+  const textBlocks = content.filter((block): block is MessagesTextBlock =>
+    block.type === "text"
+  );
+  if (textBlocks.length === content.length) {
+    return textBlocks.map((block) => block.text).join("\n\n");
+  }
+
+  return JSON.stringify(content);
+};
+
+const getClientTools = (
+  tools?: MessagesPayload["tools"],
+): MessagesClientTool[] | undefined => {
+  if (!tools || tools.length === 0) return undefined;
+
+  const clientTools = tools.filter((tool): tool is MessagesClientTool =>
+    tool.type === undefined || tool.type === "custom"
+  );
+  return clientTools.length > 0 ? clientTools : undefined;
+};
+
 const translateUserMessage = (
   message: MessagesUserMessage,
 ): ResponseInputItem[] => {
@@ -65,7 +95,7 @@ const translateUserMessage = (
       input.push({
         type: "function_call_output",
         call_id: block.tool_use_id,
-        output: block.content,
+        output: toResponsesToolResultOutput(block.content),
         status: block.is_error ? "incomplete" : "completed",
       });
       continue;
@@ -88,6 +118,16 @@ const translateAssistantMessage = (
 
   const input: ResponseInputItem[] = [];
   const pendingContent: ResponseInputContent[] = [];
+  const preservedUnsupportedHistory = message.content.filter((block) =>
+    block.type === "server_tool_use" || block.type === "web_search_tool_result"
+  );
+
+  if (preservedUnsupportedHistory.length > 0) {
+    pendingContent.push({
+      type: "output_text",
+      text: JSON.stringify(preservedUnsupportedHistory),
+    });
+  }
 
   for (const block of message.content) {
     if (block.type === "tool_use") {
@@ -148,7 +188,7 @@ const translateSystemPrompt = (
 };
 
 const translateTools = (
-  tools: MessagesTool[] | undefined,
+  tools: MessagesClientTool[] | undefined,
 ): ResponseTool[] | null => {
   if (!tools || tools.length === 0) return null;
 
@@ -163,8 +203,11 @@ const translateTools = (
 
 const translateToolChoice = (
   toolChoice: MessagesPayload["tool_choice"],
+  tools?: MessagesClientTool[],
 ): ResponseToolChoice => {
-  if (!toolChoice) return "auto";
+  if (!toolChoice || !tools || tools.length === 0) return "auto";
+
+  const toolNames = new Set(tools.map((tool) => tool.name));
 
   switch (toolChoice.type) {
     case "auto":
@@ -172,7 +215,7 @@ const translateToolChoice = (
     case "any":
       return "required";
     case "tool":
-      return toolChoice.name
+      return toolChoice.name && toolNames.has(toolChoice.name)
         ? { type: "function", name: toolChoice.name }
         : "auto";
     case "none":
@@ -197,6 +240,7 @@ export const translateMessagesToResponses = (
   const reasoning = effort
     ? { effort, summary: "detailed" as const }
     : undefined;
+  const clientTools = getClientTools(payload.tools);
 
   return {
     model: payload.model,
@@ -207,8 +251,8 @@ export const translateMessagesToResponses = (
     temperature: 1,
     top_p: payload.top_p ?? null,
     max_output_tokens: payload.max_tokens,
-    tools: translateTools(payload.tools),
-    tool_choice: translateToolChoice(payload.tool_choice),
+    tools: translateTools(clientTools),
+    tool_choice: translateToolChoice(payload.tool_choice, clientTools),
     metadata: payload.metadata ? { ...payload.metadata } : null,
     stream: payload.stream ?? null,
     store: false,
@@ -223,7 +267,8 @@ export const translateMessagesToResponsesResult = (
   response: MessagesResponse,
 ): ResponsesResult => {
   const output: ResponseOutputItem[] = [];
-  let outputText = "";
+  const textParts: string[] = [];
+  const preservedUnsupportedHistory: MessagesAssistantContentBlock[] = [];
 
   for (const block of response.content) {
     switch (block.type) {
@@ -243,7 +288,7 @@ export const translateMessagesToResponsesResult = (
         break;
       }
       case "text":
-        outputText += block.text;
+        textParts.push(block.text);
         break;
       case "tool_use":
         output.push({
@@ -254,8 +299,19 @@ export const translateMessagesToResponsesResult = (
           status: "completed",
         } as ResponseOutputFunctionCall);
         break;
+      case "server_tool_use":
+      case "web_search_tool_result":
+        preservedUnsupportedHistory.push(block);
+        break;
     }
   }
+
+  const outputText = [
+    preservedUnsupportedHistory.length > 0
+      ? JSON.stringify(preservedUnsupportedHistory)
+      : "",
+    textParts.join(""),
+  ].filter((part) => part.length > 0).join("\n\n");
 
   if (outputText.length > 0) {
     output.push({

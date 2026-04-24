@@ -225,6 +225,12 @@ Current placement:
 - `src/data-plane/targets/messages/interceptors/fix-anthropic-beta.ts`
   - whitelist `anthropic-beta`
   - auto-add `interleaved-thinking-2025-05-14` when required
+- `src/data-plane/targets/messages/interceptors/web-search-shim.ts`
+  - rewrite native Anthropic `web_search_*` server tools into a gateway-executed
+    Messages-compatible shim
+  - replay shim-owned search history back upstream as `search_result` blocks
+  - rewrite upstream tool use, tool results, and citations back into native
+    `web_search` blocks for downstream Messages clients
 - `src/data-plane/targets/messages/interceptors/strip-service-tier.ts`
   - strip unsupported `service_tier`
 - `src/data-plane/targets/messages/interceptors/strip-done-sentinel.ts`
@@ -266,13 +272,22 @@ Primary commands:
 
 ```bash
 deno test
-wrangler dev
-wrangler deploy
-wrangler d1 migrations apply copilot-db
+npx wrangler dev
+npx wrangler deploy
+npx wrangler d1 migrations apply copilot-db
 ```
 
 Before claiming work is complete, run the relevant verification command and read
 the result. Do not claim success from inspection alone.
+
+In this repository, run Wrangler via `npx wrangler` instead of assuming a global
+install.
+
+For manual data-plane validation during development, prefer `ADMIN_KEY` with the
+existing `x-models-playground: 1` header on approved playground routes instead
+of using any normal API key path. Do not reuse an existing normal API key for
+manual testing, and do not create a temporary API key just for manual testing.
+Do not broaden admin-key data-plane access beyond that existing testing path.
 
 ## Workflow Rules
 
