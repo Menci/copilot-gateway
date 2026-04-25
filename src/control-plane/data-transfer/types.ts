@@ -1,4 +1,4 @@
-import type { SearchConfig } from "../../data-plane/web-search/types.ts";
+import type { SearchConfig } from "../../data-plane/tools/web-search/types.ts";
 import type { ApiKey, GitHubAccount, UsageRecord } from "../../repo/types.ts";
 
 export interface ExportPayload {

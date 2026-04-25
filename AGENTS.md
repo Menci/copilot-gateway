@@ -43,7 +43,6 @@ Important files:
 
 - `entry-cloudflare.ts`: Workers entrypoint, env + repo initialization.
 - `src/app.ts`: Hono app wiring, middleware, route registration.
-- `src/control-plane/routes.ts`: control-plane route registration.
 - `src/lib/env.ts`: pluggable env access.
 - `src/repo/types.ts`: repo interfaces.
 - `src/repo/d1.ts`: D1-backed repo.
@@ -77,23 +76,34 @@ only.
 
 ### Data Plane Shape
 
-The data plane is organized under `src/data-plane/`.
+The data plane is organized under `src/data-plane/` by endpoint and tool
+capability first:
 
-Top-level structure is role-organized:
+- `src/data-plane/llm/`: Messages, Responses, and Chat Completions LLM routing
+- `src/data-plane/models/`: models endpoint capability
+- `src/data-plane/embeddings/`: embeddings endpoint capability
+- `src/data-plane/tools/`: data-plane tool capabilities such as web search
+- `src/data-plane/shared/`: shared data-plane infrastructure outside the LLM
+  routing graph
 
-- `src/data-plane/sources/`
-- `src/data-plane/targets/`
-- `src/data-plane/translate/`
-- `src/data-plane/shared/`
+The LLM subtree is role-organized:
 
-`src/app.ts` mounts the three main data-plane source entries directly:
+- `src/data-plane/llm/sources/`
+- `src/data-plane/llm/targets/`
+- `src/data-plane/llm/translate/`
+- `src/data-plane/llm/shared/`
+
+`sources`, `targets`, and `translate` under `src/data-plane/llm/` are only for
+Messages, Responses, and Chat Completions. Do not place `models`, `embeddings`,
+or data-plane tools inside that LLM routing graph.
+
+`src/app.ts` mounts `mountControlPlane` and `mountDataPlane`. The data-plane
+route inventory is owned by `src/data-plane/routes.ts`, and the three LLM source
+entries are mounted by `src/data-plane/llm/routes.ts`:
 
 - `serveMessages`
 - `serveResponses`
 - `serveChatCompletions`
-
-Do not reintroduce separate route wrapper files for these three APIs unless a
-real new boundary appears.
 
 Each source API has one unique entry:
 
@@ -130,9 +140,9 @@ for the same upstream endpoint should be centralized in that target subtree.
 Boundary-owned workarounds are interceptor-driven:
 
 - target emit interceptors live under
-  `src/data-plane/targets/<target>/interceptors/`
+  `src/data-plane/llm/targets/<target>/interceptors/`
 - source respond/result interceptors live under
-  `src/data-plane/sources/<source>/interceptors/`
+  `src/data-plane/llm/sources/<source>/interceptors/`
 - each such directory owns one `index.ts` registration array; change that array
   when adding, removing, or reordering interceptors
 
@@ -157,9 +167,14 @@ Do not introduce a canonical internal IR for requests.
 
 ### Contract Stability
 
+Public data-plane compatibility APIs are stable external contracts.
+
 Control-plane API endpoints and schemas are dashboard-owned. They need to stay
 consistent with the frontend, tests, and auth policy, but they are not external
 compatibility APIs unless explicitly documented as such.
+
+Data-plane tool management endpoints and schemas are UI-owned. They need to stay
+consistent with the frontend or management code that uses them.
 
 ## Authentication and Authorization
 
@@ -203,12 +218,17 @@ model supports it.
 
 1. Native `/responses`
 2. Translated `/v1/messages`
+3. Translated `/chat/completions`
 
 `/v1/chat/completions` chooses among:
 
 1. Translated `/v1/messages`
-2. Translated `/responses`
-3. Native `/chat/completions`
+2. Native `/chat/completions`
+3. Translated `/responses`
+
+If no capability-backed target is available, `/v1/chat/completions` keeps its
+legacy model-name fallback: `claude*` models route through `/v1/messages`, and
+other models route through native `/chat/completions`.
 
 Planning is the only layer allowed to make this routing decision.
 
@@ -218,39 +238,39 @@ Keep workarounds in the layer that owns the boundary where they apply.
 
 Current placement:
 
-- `src/data-plane/sources/messages/normalize/`
+- `src/data-plane/llm/sources/messages/normalize/`
   - strip `x-anthropic-billing-header` prompt attribution
   - strip `cache_control.scope`
   - remove unsupported `web_search` tools
-- `src/data-plane/sources/messages/interceptors/rewrite-context-window-error.ts`
+- `src/data-plane/llm/sources/messages/interceptors/rewrite-context-window-error.ts`
   - rewrite upstream context-window errors into the Anthropic compact
     `invalid_request_error` envelope expected by Messages clients
-- `src/data-plane/sources/responses/normalize/`
+- `src/data-plane/llm/sources/responses/normalize/`
   - rewrite `apply_patch` from `custom` to `function`
-- `src/data-plane/targets/messages/interceptors/filter-invalid-thinking-blocks.ts`
+- `src/data-plane/llm/targets/messages/interceptors/filter-invalid-thinking-blocks.ts`
   - filter invalid thinking blocks
-- `src/data-plane/targets/messages/interceptors/fix-anthropic-beta.ts`
+- `src/data-plane/llm/targets/messages/interceptors/fix-beta-header.ts`
   - whitelist `anthropic-beta`
   - auto-add `interleaved-thinking-2025-05-14` when required
-- `src/data-plane/targets/messages/interceptors/web-search-shim.ts`
+- `src/data-plane/llm/targets/messages/interceptors/web-search-shim.ts`
   - rewrite native Anthropic `web_search_*` server tools into a gateway-executed
     Messages-compatible shim
   - replay shim-owned search history back upstream as `search_result` blocks
   - rewrite upstream tool use, tool results, and citations back into native
     `web_search` blocks for downstream Messages clients
-- `src/data-plane/targets/messages/interceptors/strip-service-tier.ts`
+- `src/data-plane/llm/targets/messages/interceptors/strip-service-tier.ts`
   - strip unsupported `service_tier`
-- `src/data-plane/targets/messages/interceptors/strip-done-sentinel.ts`
+- `src/data-plane/llm/targets/messages/interceptors/strip-done-sentinel.ts`
   - strip stray `[DONE]` sentinels
-- `src/data-plane/targets/responses/interceptors/retry-connection-mismatch.ts`
+- `src/data-plane/llm/targets/responses/interceptors/retry-connection-mismatch.ts`
   - detect expired connection-bound input IDs
   - deterministically rewrite IDs
   - retry once
-- `src/data-plane/targets/responses/interceptors/synchronize-output-item-ids.ts`
+- `src/data-plane/llm/targets/responses/interceptors/synchronize-output-item-ids.ts`
   - synchronize mismatched stream item IDs
-- `src/data-plane/targets/chat-completions/interceptors/include-usage-stream-options.ts`
+- `src/data-plane/llm/targets/chat-completions/interceptors/include-usage-stream-options.ts`
   - ensure streaming usage options needed by native chat handling
-- `src/data-plane/targets/chat-completions/interceptors/fix-claude-choice-shape.ts`
+- `src/data-plane/llm/targets/chat-completions/interceptors/fix-claude-choice-shape.ts`
   - merge Claude split choices
   - normalize streaming choice indices
 - shared translation event helpers
@@ -421,21 +441,29 @@ These rules apply project-wide, not only to the data plane.
 
 ## File Structure Guidance
 
-- New data-plane work belongs in `src/data-plane/`.
-- Source-specific work belongs in `src/data-plane/sources/<source>/`.
+- New data-plane work belongs in the capability directory under
+  `src/data-plane/` where the behavior is true.
+- LLM source-specific work belongs in `src/data-plane/llm/sources/<source>/`.
 - Source-owned result fixes belong in
-  `src/data-plane/sources/<source>/interceptors/` and are registered in that
+  `src/data-plane/llm/sources/<source>/interceptors/` and are registered in that
   directory's `index.ts`.
-- Shared target-specific logic belongs in `src/data-plane/targets/<target>/`.
+- Shared target-specific logic belongs in
+  `src/data-plane/llm/targets/<target>/`.
 - Target-owned request/response/retry fixes belong in
-  `src/data-plane/targets/<target>/interceptors/` and are registered in that
+  `src/data-plane/llm/targets/<target>/interceptors/` and are registered in that
   directory's `index.ts`.
-- Pairwise translators belong in `src/data-plane/translate/`.
+- Pairwise translators belong in `src/data-plane/llm/translate/`.
+- Models endpoint work belongs in `src/data-plane/models/`.
+- Embeddings endpoint work belongs in `src/data-plane/embeddings/`.
+- Data-plane tool capability work belongs in `src/data-plane/tools/<tool>/`,
+  such as `src/data-plane/tools/web-search/`.
+- Shared data-plane HTTP helpers belong in `src/data-plane/shared/http/`.
+- Shared LLM routing helpers belong in `src/data-plane/llm/shared/`.
 - Source-specific request cleanup, planning, response assembly, and
   orchestration belong under that source API's subtree.
 - Keep final source protocol collection and response shaping source-local.
 - If you are reorganizing pair modules, prefer
-  `src/data-plane/translate/<source>-via-<target>/` over split request/event
+  `src/data-plane/llm/translate/<source>-via-<target>/` over split request/event
   directories.
 
 When in doubt, prefer the location that matches the boundary where the logic is

@@ -25,7 +25,7 @@ import {
   testSearchConfigRoute,
 } from "./search-config/routes.ts";
 import { tokenUsage } from "./token-usage/routes.ts";
-import { models } from "../routes/models.ts";
+import { models } from "../data-plane/models/serve.ts";
 
 export const mountControlPlane = (app: Hono) => {
   mountPageRoutes(app);

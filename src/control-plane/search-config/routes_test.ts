@@ -5,7 +5,7 @@ import {
   setupAppTest,
   withMockedFetch,
 } from "../../test-helpers.ts";
-import { DEFAULT_SEARCH_CONFIG } from "../../data-plane/web-search/search-config.ts";
+import { DEFAULT_SEARCH_CONFIG } from "../../data-plane/tools/web-search/search-config.ts";
 
 Deno.test("/api/search-config GET returns the default disabled config for admin", async () => {
   const { adminKey } = await setupAppTest();

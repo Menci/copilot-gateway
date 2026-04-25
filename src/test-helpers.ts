@@ -1,7 +1,7 @@
 import { app } from "./app.ts";
 import { clearCopilotTokenCache } from "./lib/copilot.ts";
 import { initEnv } from "./lib/env.ts";
-import type { SearchConfig } from "./data-plane/web-search/types.ts";
+import type { SearchConfig } from "./data-plane/tools/web-search/types.ts";
 import { InMemoryRepo } from "./repo/memory.ts";
 import { initRepo } from "./repo/index.ts";
 import type { ApiKey, GitHubAccount } from "./repo/types.ts";

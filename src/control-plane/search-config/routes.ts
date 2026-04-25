@@ -3,8 +3,8 @@ import {
   loadSearchConfig,
   normalizeSearchConfig,
   saveSearchConfig,
-} from "../../data-plane/web-search/search-config.ts";
-import { testSearchConfigConnection } from "../../data-plane/web-search/provider.ts";
+} from "../../data-plane/tools/web-search/search-config.ts";
+import { testSearchConfigConnection } from "../../data-plane/tools/web-search/provider.ts";
 
 export const getSearchConfigRoute = async (c: Context) =>
   c.json(await loadSearchConfig());

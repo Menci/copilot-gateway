@@ -2,21 +2,21 @@
 
 ## Overview
 
-`copilot-deno` exposes three client-facing data plane APIs:
+`copilot-gateway` exposes three client-facing data plane APIs:
 
 - `POST /v1/messages` — Anthropic Messages compatible endpoint
 - `POST /v1/responses` — OpenAI Responses compatible endpoint
 - `POST /v1/chat/completions` — OpenAI Chat Completions endpoint
 
 Route selection is driven by `GET /models` capability data, specifically each
-model's `supported_endpoints`. The implementation does not hardcode model
-families. The gateway does not runtime-probe request-shape support; once a
-target endpoint is selected, request validation is generally left to that
-upstream endpoint.
+model's `supported_endpoints`. The only model-name fallback is the legacy Chat
+Completions behavior for models without any usable capability-backed target.
+The gateway does not runtime-probe request-shape support; once a target endpoint
+is selected, request validation is generally left to that upstream endpoint.
 
 ## `/v1/messages` Routing
 
-File: `src/routes/messages.ts`
+File: `src/data-plane/llm/sources/messages/serve.ts`
 
 The Messages route selects one of three paths:
 
@@ -37,7 +37,7 @@ Current behavior:
 
 ## Native Messages Path
 
-File: `src/routes/messages.ts`
+File: `src/data-plane/llm/sources/messages/serve.ts`
 
 When forwarding to native `/v1/messages`, the gateway applies only compatibility
 workarounds that preserve Anthropic semantics:
@@ -58,9 +58,10 @@ The gateway does not inject `adaptive` thinking mode.
 
 Files:
 
-- `src/lib/translate/openai.ts`
-- `src/lib/translate/openai-stream.ts`
-- `src/lib/translate/chat-to-messages.ts`
+- `src/lib/translate/messages-to-chat-completions.ts`
+- `src/lib/translate/messages-to-chat-completions-stream.ts`
+- `src/lib/translate/chat-completions-to-messages.ts`
+- `src/lib/translate/chat-completions-to-messages-stream.ts`
 
 This path is used only when native `/v1/messages` is unavailable.
 
@@ -106,9 +107,10 @@ Anthropic SSE events such as:
 
 Files:
 
-- `src/lib/translate/responses.ts`
-- `src/lib/translate/responses-stream.ts`
-- `src/lib/translate/anthropic-to-responses-stream.ts`
+- `src/lib/translate/messages-to-responses.ts`
+- `src/lib/translate/messages-to-responses-stream.ts`
+- `src/lib/translate/responses-to-messages.ts`
+- `src/lib/translate/responses-to-messages-stream.ts`
 
 This path is used whenever native `/v1/messages` is unavailable and the model
 supports `/responses`. The `/chat/completions` translation path is only used for
@@ -130,33 +132,44 @@ Main mappings:
 
 ## `/v1/responses` Routing
 
-File: `src/routes/responses.ts`
+File: `src/data-plane/llm/sources/responses/serve.ts`
 
-The Responses route selects one of two paths:
+The Responses route selects one of three paths:
 
-1. Direct Responses passthrough if the model supports `/responses`
-2. Reverse translation through Anthropic Messages if the model only supports
-   `/v1/messages`
+1. Native Responses if the model supports `/responses`
+2. Reverse translation through Anthropic Messages if `/responses` is
+   unavailable and the model supports `/v1/messages`
+3. Reverse translation through Chat Completions if neither `/responses` nor
+   `/v1/messages` is available and the model supports `/chat/completions`
 
 ## `/v1/chat/completions` Routing
 
-File: `src/routes/chat-completions.ts`
+File: `src/data-plane/llm/sources/chat-completions/serve.ts`
 
-The Chat Completions route selects one of three paths:
+The Chat Completions route selects one of three capability-backed paths:
 
-1. Messages translation If the model supports `/v1/messages`, translate Chat
+1. Messages translation. If the model supports `/v1/messages`, translate Chat
    Completions ↔ Anthropic Messages (reuses the Messages translation layer).
-2. Direct passthrough If the model supports `/chat/completions`, forward the
-   request directly.
-3. Responses translation If the model only supports `/responses`, translate Chat
-   Completions ↔ Responses directly (no Anthropic intermediate).
+2. Native Chat Completions. If the model supports `/chat/completions`, forward
+   the request directly.
+3. Responses translation. If neither `/v1/messages` nor `/chat/completions` is
+   available and the model supports `/responses`, translate Chat Completions ↔
+   Responses directly (no Anthropic intermediate).
 
-Unknown Chat Completions fields are only preserved on native `/chat/completions`
-passthrough. Translated paths only carry fields with explicit pairwise mappings.
+Unknown Chat Completions fields are only preserved on the native
+`/chat/completions` route. Translated paths only carry fields with explicit
+pairwise mappings.
+
+If no capability-backed target is available, the route keeps its legacy fallback:
+`claude*` model names route through Anthropic Messages, and other model names
+route through native Chat Completions.
 
 ## Chat Completions ↔ Responses Translation
 
-File: `src/lib/translate/chat-to-responses.ts`
+Files:
+
+- `src/lib/translate/chat-completions-to-responses.ts`
+- `src/lib/translate/responses-to-chat-completions.ts`
 
 This path is used when a model accessed via `/chat/completions` only supports
 the `/responses` endpoint. Translation is direct — no Anthropic intermediate
@@ -296,14 +309,17 @@ kept in target-side interceptors, not pairwise translators.
 
 ## Key Files
 
-- `src/routes/messages.ts`
-- `src/routes/responses.ts`
-- `src/routes/chat-completions.ts`
-- `src/routes/count-tokens.ts`
-- `src/lib/translate/openai.ts`
-- `src/lib/translate/openai-stream.ts`
-- `src/lib/translate/chat-to-messages.ts`
-- `src/lib/translate/chat-to-responses.ts`
-- `src/lib/translate/responses.ts`
-- `src/lib/translate/responses-stream.ts`
-- `src/lib/translate/anthropic-to-responses-stream.ts`
+- `src/data-plane/llm/sources/messages/serve.ts`
+- `src/data-plane/llm/sources/responses/serve.ts`
+- `src/data-plane/llm/sources/chat-completions/serve.ts`
+- `src/data-plane/llm/sources/messages/count-tokens/serve.ts`
+- `src/lib/translate/messages-to-chat-completions.ts`
+- `src/lib/translate/messages-to-chat-completions-stream.ts`
+- `src/lib/translate/chat-completions-to-messages.ts`
+- `src/lib/translate/chat-completions-to-messages-stream.ts`
+- `src/lib/translate/messages-to-responses.ts`
+- `src/lib/translate/messages-to-responses-stream.ts`
+- `src/lib/translate/responses-to-messages.ts`
+- `src/lib/translate/responses-to-messages-stream.ts`
+- `src/lib/translate/chat-completions-to-responses.ts`
+- `src/lib/translate/responses-to-chat-completions.ts`

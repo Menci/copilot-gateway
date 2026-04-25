@@ -1,7 +1,7 @@
 // Data transfer routes — export/import all database data as JSON
 
 import type { Context } from "hono";
-import { normalizeSearchConfig } from "../../data-plane/web-search/search-config.ts";
+import { normalizeSearchConfig } from "../../data-plane/tools/web-search/search-config.ts";
 import { getRepo } from "../../repo/index.ts";
 import type { ApiKey, GitHubAccount, UsageRecord } from "../../repo/types.ts";
 import type { ExportPayload } from "./types.ts";

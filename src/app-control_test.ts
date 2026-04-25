@@ -1,5 +1,5 @@
 import { assertEquals, assertExists } from "@std/assert";
-import { DEFAULT_SEARCH_CONFIG } from "./data-plane/web-search/search-config.ts";
+import { DEFAULT_SEARCH_CONFIG } from "./data-plane/tools/web-search/search-config.ts";
 import {
   copilotModels,
   jsonResponse,
