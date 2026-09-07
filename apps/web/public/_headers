@@ -37,7 +37,8 @@
 # which is the trade we are making here.
 # https://developers.cloudflare.com/workers/versions-and-deployments/gradual-deployments/version-affinity/
 #
-# docker/nginx.conf states the same policy for the docker-compose topology, and
+# apps/platform-node/src/static-web.ts states the same policy for the Node
+# self-host topology, and
 # apps/web/__tests__/static-asset-caching_test.ts fails when the two drift.
 /assets/*
   Cache-Control: public, max-age=31536000, immutable

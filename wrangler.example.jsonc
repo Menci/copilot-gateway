@@ -46,7 +46,7 @@
     // Workers Static Assets as a SPA fallback) restates, for production on
     // Cloudflare, the set two other files restate for their topologies:
     //
-    //   - The `location ~` regexes in docker/nginx.conf (the docker-compose
+    //   - `isGatewayPath` in apps/platform-node/src/static-web.ts (the Node
     //     self-host topology).
     //   - `wranglerProxiedPaths` in apps/web/gateway-paths.ts (the `vite dev`
     //     proxy-to-wrangler-dev topology).

@@ -48,7 +48,7 @@ patchedDependencies:
   'overlayscrollbars@2.13.0': patches/overlayscrollbars@2.13.0.patch
 
 # @react-router/dev pulls in a standalone HTTP server we never run — the SPA is
-# served by Workers Static Assets in production and by nginx in the
+# served by Workers Static Assets in production and by the Node target in the
 # docker-compose topology.
 overrides:
   '@react-router/dev>@react-router/serve': '-'

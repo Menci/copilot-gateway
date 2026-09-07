@@ -38,28 +38,6 @@ COPY patches ./patches
 COPY apps ./apps
 COPY packages ./packages
 
-# `--prod` skips every workspace's devDependencies, most importantly
-# `wrangler → miniflare → sharp@0.34.5` at the repo root. That saves a
-# whole redundant sharp/libvips prebuilt on riscv64 — where installing
-# even one prebuilt through QEMU is already the slow step.
-# `--ignore-scripts` bypasses the root `prepare: husky` hook whose binary
-# lives in devDependencies; nothing else in the tree needs an install
-# script (sharp 0.33+ ships prebuilts through optional deps).
-FROM base AS server
-RUN pnpm install --frozen-lockfile --prod --ignore-scripts
-
-ENV NODE_ENV=production
-ENV PORT=8788
-ENV FLOWAY_DB_PATH=/data/floway.db
-ENV FLOWAY_FILES_DIR=/data/files
-
-RUN mkdir -p /data/files
-
-VOLUME ["/data"]
-EXPOSE 8788
-
-CMD ["pnpm", "run", "dev:node"]
-
 # The web bundle is platform-independent, while Rolldown and Lightning CSS do
 # not publish riscv64 binaries. This stage therefore starts from a native Node
 # image for BUILDPLATFORM; inheriting `base` would retain its target-platform
@@ -81,10 +59,29 @@ COPY packages ./packages
 RUN pnpm install --frozen-lockfile --ignore-scripts
 RUN pnpm run build:web
 
-FROM nginx:1.27-alpine AS web
+# `--prod` skips every workspace's devDependencies, most importantly
+# `wrangler → miniflare → sharp@0.34.5` at the repo root. That saves a
+# whole redundant sharp/libvips prebuilt on riscv64 — where installing
+# even one prebuilt through QEMU is already the slow step.
+# `--ignore-scripts` bypasses the root `prepare: husky` hook whose binary
+# lives in devDependencies; nothing else in the tree needs an install
+# script (sharp 0.33+ ships prebuilts through optional deps).
+FROM base AS server
+RUN pnpm install --frozen-lockfile --prod --ignore-scripts
+COPY --from=web-build /app/apps/web/dist/client ./apps/web/dist/client
+# The former nginx dashboard image exposed the repository license at /LICENSE.
+# Keep that public path while the Node static handler owns the web bundle.
+COPY LICENSE ./apps/web/dist/client/LICENSE
 
-COPY docker/nginx.conf /etc/nginx/conf.d/default.conf
-COPY LICENSE /usr/share/nginx/html/LICENSE
-COPY --from=web-build /app/apps/web/dist/client /usr/share/nginx/html
+ENV NODE_ENV=production
+ENV PORT=8788
+ENV HOST=0.0.0.0
+ENV FLOWAY_DB_PATH=/data/floway.db
+ENV FLOWAY_FILES_DIR=/data/files
 
-EXPOSE 80
+RUN mkdir -p /data/files
+
+VOLUME ["/data"]
+EXPOSE 8788
+
+CMD ["pnpm", "--filter", "@floway-dev/platform-node", "run", "start:built"]

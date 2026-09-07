@@ -1,8 +1,8 @@
 // `Crypto.randomUUID` and `Crypto.subtle` carry WebIDL's `[SecureContext]`
 // extended attribute, so a browser exposes neither over plain HTTP unless the
 // host is a loopback literal. The dashboard is reached that way in the
-// deployment we document — nginx publishes it on 18088 behind whatever LAN
-// address the operator's host has — and the two are what mints the PKCE
+// deployment we document — the Node server publishes it on 18088 behind
+// whatever LAN address the operator's host has — and the two are what mints the PKCE
 // challenge for an OAuth upstream and the ids of playground messages.
 // https://w3c.github.io/webcrypto/#crypto-interface
 // https://developer.mozilla.org/en-US/docs/Web/Security/Secure_Contexts/features_restricted_to_secure_contexts

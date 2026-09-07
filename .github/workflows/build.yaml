@@ -14,13 +14,7 @@ jobs:
       packages: write
     env:
       PUSH_DOCKERHUB: ${{ secrets.DOCKERHUB_TOKEN != '' }}
-    strategy:
-      fail-fast: false
-      matrix:
-        target:
-          - name: server
-          - name: web
-    name: ${{ matrix.target.name }}
+    name: server
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -47,7 +41,7 @@ jobs:
 
           # OCI image names must be lowercase; GitHub owner casing varies by user
           OWNER_LC="${OWNER,,}"
-          IMAGE_NAME="$OWNER_LC/floway-$TARGET"
+          IMAGE_NAME="$OWNER_LC/floway-server"
           DATE="$(date +'%Y%m%d')"
 
           REGISTRIES=("ghcr.io/")
@@ -62,7 +56,6 @@ jobs:
 
           echo "EOF" >> "$GITHUB_ENV"
         env:
-          TARGET: ${{ matrix.target.name }}
           RUN_ID: ${{ github.run_id }}
           OWNER: ${{ github.repository_owner }}
       - name: Build and Push
@@ -70,9 +63,9 @@ jobs:
         with:
           context: .
           file: docker/Dockerfile
-          target: ${{ matrix.target.name }}
+          target: server
           platforms: linux/amd64,linux/arm64,linux/arm/v7,linux/riscv64
           push: true
           tags: ${{ env.TAGS }}
-          cache-from: type=gha,scope=${{ matrix.target.name }}
-          cache-to: type=gha,scope=${{ matrix.target.name }},mode=max
+          cache-from: type=gha,scope=server
+          cache-to: type=gha,scope=server,mode=max

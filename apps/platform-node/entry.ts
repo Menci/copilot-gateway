@@ -26,6 +26,7 @@ setGlobalDispatcher(new Agent({
 import { bootstrapNodePlatform } from './src/bootstrap.ts';
 import { applyMigrations } from './src/migrate.ts';
 import { startScheduledMaintenance } from './src/scheduled-maintenance.ts';
+import { createNodeFetchHandler, nodeWebDistDir } from './src/static-web.ts';
 import {
   app,
   initBackgroundSchedulerResolver,
@@ -48,6 +49,8 @@ initOpenAIResponsesWebSocketUpgradeResolver((c, events) =>
 
 const { db } = bootstrapNodePlatform();
 const port = Number(getEnvOptional('PORT', '8788'));
+const hostname = String(getEnvOptional('HOST', '127.0.0.1'));
+const fetch = createNodeFetchHandler(app.fetch, { distDir: nodeWebDistDir() });
 
 // Passwordless admin login is a dev-only shortcut (empty ADMIN_KEY on a
 // local instance grants seed-admin access). Refuse to boot the Node
@@ -65,7 +68,8 @@ initRepo(new SqlRepo(db));
 startScheduledMaintenance();
 
 serve({
-  fetch: app.fetch,
+  fetch,
+  hostname,
   port,
   websocket: { server: new WebSocketServer({ noServer: true }) },
 }, info => {

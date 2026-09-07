@@ -131,10 +131,13 @@ pnpm install
 ADMIN_KEY='replace-with-a-secret' pnpm run dev:node
 ```
 
-It serves the data-plane and control-plane APIs but not the dashboard. Use
-Docker Compose for the complete self-hosted UI, or serve the web app separately.
-Production Node.js deployments must set both `NODE_ENV=production` and a
-non-empty `ADMIN_KEY`.
+It serves the dashboard, data-plane, and control-plane APIs from the same
+origin. `dev:node` binds `127.0.0.1` by default; set `HOST=0.0.0.0` when the
+service must accept network connections. `dev:node` builds the web bundle
+before starting; deployments that build separately may set
+`FLOWAY_WEB_DIST_DIR` to the bundle directory (default:
+`apps/web/dist/client`). Production Node.js deployments must set both
+`NODE_ENV=production` and a non-empty `ADMIN_KEY`.
 
 Podman users can instead follow the
 [systemd deployment guide](./docker/systemd/README.md).

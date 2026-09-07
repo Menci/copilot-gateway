@@ -8,7 +8,8 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "start": "tsx entry.ts"
+    "start": "pnpm --filter @floway-dev/web run build && pnpm run start:built",
+    "start:built": "tsx entry.ts"
   },
   "dependencies": {
     "@floway-dev/gateway": "workspace:*",
