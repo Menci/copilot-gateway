@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import type { CodexQuotaSnapshotMap, UpstreamRecord } from '../../../src/api/types';
-import { accountStatus, findCredential, latestCredits, quotaEntries } from '../../../src/components/upstreams/codex-account';
+import type { CodexQuotaSnapshotMap, CodexRateLimitResetCredit, UpstreamRecord } from '../../../src/api/types';
+import { accountStatus, codexResetCreditIsUsable, findCredential, latestCredits, quotaEntries } from '../../../src/components/upstreams/codex-account';
 
 type CodexRecord = Extract<UpstreamRecord, { kind: 'codex' }>;
 
@@ -79,6 +79,21 @@ describe('codex credits', () => {
   it('is null when no snapshot mentions credits at all', () => {
     expect(latestCredits({ daily: { observed_at: PAST, primary_used_percent: 1 } })).toBeNull();
     expect(latestCredits(null)).toBeNull();
+  });
+});
+
+describe('codex reset cards', () => {
+  const credit = (overrides: Partial<CodexRateLimitResetCredit> = {}): CodexRateLimitResetCredit => ({
+    id: 'credit-1', reset_type: 'codex_rate_limits', status: 'available',
+    granted_at: PAST, expires_at: FUTURE, title: null, description: null, ...overrides,
+  });
+
+  it('only enables known available, unexpired Codex reset cards', () => {
+    expect(codexResetCreditIsUsable(credit(), NOW)).toBe(true);
+    expect(codexResetCreditIsUsable(credit({ status: 'redeemed' }), NOW)).toBe(false);
+    expect(codexResetCreditIsUsable(credit({ reset_type: 'future_reset' }), NOW)).toBe(false);
+    expect(codexResetCreditIsUsable(credit({ expires_at: PAST }), NOW)).toBe(false);
+    expect(codexResetCreditIsUsable(credit({ expires_at: null }), NOW)).toBe(true);
   });
 });
 

@@ -47,6 +47,14 @@ export const CODEX_ALPHA_SEARCH_PATH = '/codex/alpha/search';
 export const CODEX_OPENAI_RESPONSES_COMPACT_PATH = '/codex/responses/compact';
 export const CODEX_MODELS_PATH = '/codex/models';
 
+// Earned ChatGPT subscription resets are a separate account surface from the
+// ordinary Codex data plane. The official Codex backend client selects these
+// WHAM paths for chatgpt.com and posts a caller-stable redemption id beside an
+// optional opaque credit id:
+// https://github.com/openai/codex/blob/main/codex-rs/backend-client/src/client/rate_limit_resets.rs#L90-L130
+export const CODEX_RATE_LIMIT_RESET_CREDITS_PATH = '/wham/rate-limit-reset-credits';
+export const CODEX_RATE_LIMIT_RESET_CREDITS_CONSUME_PATH = '/wham/rate-limit-reset-credits/consume';
+
 // Codex's image extension does not discover this model through /codex/models.
 // It owns the capability and sends the fixed model id to these provider-
 // relative endpoints instead.

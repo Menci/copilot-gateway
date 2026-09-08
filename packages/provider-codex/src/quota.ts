@@ -166,3 +166,20 @@ export const putCodexQuota = async (
     }));
   });
 };
+
+// A successful earned reset invalidates every locally observed window. Do not
+// synthesize zeroes: OpenAI explicitly requires clients to refetch limits after
+// redemption, and the next Codex response will repopulate the same slot.
+// https://github.com/openai/codex/blob/main/codex-rs/app-server/README.md#8-earned-rate-limit-resets-chatgpt
+export const clearCodexQuota = async (
+  upstreamId: string,
+  accountId: string,
+): Promise<void> => {
+  await getProviderRepo().upstreams.saveState(upstreamId, current => {
+    const state = readCodexUpstreamState(current);
+    const idx = findCodexAccountIndex(state, accountId);
+    if (idx < 0) throw new Error(`clearCodexQuota: Codex account ${accountId} not found in upstream ${upstreamId}`);
+    if (state.accounts[idx].quotaSnapshot === null) return current;
+    return replaceCodexAccount(state, idx, account => ({ ...account, quotaSnapshot: null }));
+  });
+};

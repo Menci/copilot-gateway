@@ -9,13 +9,13 @@ import { createAlias, deleteAlias, listAliases, updateAlias } from './model-alia
 import { controlPlaneModels } from './models/routes.ts';
 import { performanceOverview } from './performance/routes.ts';
 import { createProxy, deleteProxy, listAllBackoffs, listProxies, listProxyBackoffs, resetProxyBackoffs, testProxy, updateProxy } from './proxies/routes.ts';
-import { authLoginBody, changeOwnPasswordBody, claudeCodeOAuthAuthorizeUrlBody, claudeCodeOAuthExchangeBody, claudeCodeOAuthRefreshBody, claudeCodeProbeBody, claudeCodeSetupTokenAuthorizeUrlBody, claudeCodeSetupTokenExchangeBody, codexOAuthAuthorizeUrlBody, codexOAuthExchangeBody, codexOAuthRefreshBody, copilotOAuthDeviceLoginPollBody, copilotOAuthDeviceLoginStartBody, copilotQuotaBody, createAliasBody, createKeyBody, createProxyBody, createUpstreamBody, createUserBody, exportQuery, importBody, listModelsBody, modelsQuery, ollamaUsageBody, performanceQuery, resetBackoffBody, rotateKeyBody, webSearchConfigSchema, webSearchUsageQuery, testProxyBody, tokenUsageOverviewQuery, tokenUsageQuery, updateAliasBody, updateKeyBody, updateProxyBody, updateUpstreamBody, updateUserBody } from './schemas.ts';
+import { authLoginBody, changeOwnPasswordBody, claudeCodeOAuthAuthorizeUrlBody, claudeCodeOAuthExchangeBody, claudeCodeOAuthRefreshBody, claudeCodeProbeBody, claudeCodeSetupTokenAuthorizeUrlBody, claudeCodeSetupTokenExchangeBody, codexOAuthAuthorizeUrlBody, codexOAuthExchangeBody, codexOAuthRefreshBody, codexRateLimitResetConsumeBody, codexRateLimitResetCreditsBody, copilotOAuthDeviceLoginPollBody, copilotOAuthDeviceLoginStartBody, copilotQuotaBody, createAliasBody, createKeyBody, createProxyBody, createUpstreamBody, createUserBody, exportQuery, importBody, listModelsBody, modelsQuery, ollamaUsageBody, performanceQuery, resetBackoffBody, rotateKeyBody, webSearchConfigSchema, webSearchUsageQuery, testProxyBody, tokenUsageOverviewQuery, tokenUsageQuery, updateAliasBody, updateKeyBody, updateProxyBody, updateUpstreamBody, updateUserBody } from './schemas.ts';
 import { getWebSearchConfigRoute, putWebSearchConfigRoute, testWebSearchConfigRoute } from './search-config/routes.ts';
 import { webSearchUsage } from './search-usage/routes.ts';
 import { tokenUsageOverview } from './token-usage/overview.ts';
 import { tokenUsage } from './token-usage/routes.ts';
 import { claudeCodeOAuthAuthorizeUrl, claudeCodeOAuthExchange, claudeCodeOAuthRefresh, claudeCodeProbe, claudeCodeSetupTokenAuthorizeUrl, claudeCodeSetupTokenExchange } from './upstreams/claude-code.ts';
-import { codexOAuthAuthorizeUrl, codexOAuthExchange, codexOAuthRefresh } from './upstreams/codex.ts';
+import { codexOAuthAuthorizeUrl, codexOAuthExchange, codexOAuthRefresh, codexRateLimitResetConsume, codexRateLimitResetCredits } from './upstreams/codex.ts';
 import { copilotOAuthDeviceLoginPoll, copilotOAuthDeviceLoginStart, copilotQuota } from './upstreams/copilot.ts';
 import { listModels } from './upstreams/models.ts';
 import { ollamaUsage } from './upstreams/ollama.ts';
@@ -85,6 +85,8 @@ export const controlPlaneRoutes = new Hono<{ Variables: AuthVars }>()
     .post('/upstreams/codex/oauth/authorize-url', zValidator('json', codexOAuthAuthorizeUrlBody), codexOAuthAuthorizeUrl)
     .post('/upstreams/codex/oauth/exchange', zValidator('json', codexOAuthExchangeBody), codexOAuthExchange)
     .post('/upstreams/codex/oauth/refresh', zValidator('json', codexOAuthRefreshBody), codexOAuthRefresh)
+    .post('/upstreams/codex/reset-credits', zValidator('json', codexRateLimitResetCreditsBody), codexRateLimitResetCredits)
+    .post('/upstreams/codex/reset-credits/consume', zValidator('json', codexRateLimitResetConsumeBody), codexRateLimitResetConsume)
     .post('/upstreams/claude-code/oauth/authorize-url', zValidator('json', claudeCodeOAuthAuthorizeUrlBody), claudeCodeOAuthAuthorizeUrl)
     .post('/upstreams/claude-code/oauth/exchange', zValidator('json', claudeCodeOAuthExchangeBody), claudeCodeOAuthExchange)
     .post('/upstreams/claude-code/oauth/refresh', zValidator('json', claudeCodeOAuthRefreshBody), claudeCodeOAuthRefresh)

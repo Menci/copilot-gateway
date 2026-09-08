@@ -451,6 +451,14 @@ export const codexOAuthExchangeBody = z.object({
 
 export const codexOAuthRefreshBody = recordOnlyBody;
 
+export const codexRateLimitResetCreditsBody = recordOnlyBody;
+
+export const codexRateLimitResetConsumeBody = z.object({
+  record: upstreamRecordEnvelope,
+  credit_id: z.string().min(1),
+  idempotency_key: z.string().min(1),
+});
+
 // --- claude-code OAuth + setup-token + probe (record-body contract) ---
 
 // Shared by claude-code OAuth + Setup-Token callbacks.

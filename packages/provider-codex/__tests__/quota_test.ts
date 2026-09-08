@@ -4,6 +4,7 @@ import { createUpstreamStateRepoStub, type UpstreamStateRepoStub } from './upstr
 import {
   CODEX_QUOTA_UNKNOWN_ACTIVE_LIMIT,
   codexQuotaActiveLimitKey,
+  clearCodexQuota,
   getCodexQuota,
   hasCodexQuotaReading,
   parseCodexQuotaHeaders,
@@ -265,6 +266,20 @@ describe('putCodexQuota', () => {
 
   test('throws when the requested account is not in the pool', async () => {
     await expect(putCodexQuota(upstreamId, 'acc_other', { observed_at: 'now' })).rejects.toThrow(/not found in upstream/);
+    expect(repo.writes).toEqual([]);
+  });
+});
+
+describe('clearCodexQuota', () => {
+  test('invalidates every observed bucket without touching the credential', async () => {
+    const snap: CodexQuotaSnapshot = { observed_at: '2026-06-05T00:00:00.000Z', active_limit: 'premium', primary_used_percent: 90 };
+    current = makeRecord({ accounts: [{ ...baseAccount, quotaSnapshot: { premium: { fetchedAt: 1, data: snap } } }] });
+    await clearCodexQuota(upstreamId, accountId);
+    expect((current!.state as CodexUpstreamState).accounts[0]).toEqual({ ...baseAccount, quotaSnapshot: null });
+  });
+
+  test('does not write when the quota slot is already empty', async () => {
+    await clearCodexQuota(upstreamId, accountId);
     expect(repo.writes).toEqual([]);
   });
 });

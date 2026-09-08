@@ -10,6 +10,8 @@ export type {
   CodexAccountCredentialState,
   CodexQuotaSnapshot,
   CodexQuotaSnapshotMap,
+  CodexRateLimitResetCredit,
+  CodexRateLimitResetCredits,
   CustomRawModel,
   ListUpstreamModelsResponse,
   UpstreamRecord,

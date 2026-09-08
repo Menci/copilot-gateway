@@ -8,10 +8,16 @@ import type {
   CodexAccountCredentialState,
   CodexQuotaSnapshot,
   CodexQuotaSnapshotMap,
+  CodexRateLimitResetCredit,
   UpstreamRecord,
 } from '../../api/types';
 
 export type CodexRecord = Extract<UpstreamRecord, { kind: 'codex' }>;
+
+export const codexResetCreditIsUsable = (credit: CodexRateLimitResetCredit, now: number): boolean =>
+  credit.reset_type === 'codex_rate_limits'
+  && credit.status === 'available'
+  && (credit.expires_at === null || new Date(credit.expires_at).getTime() > now);
 
 // `chatgpt_plan_type` is an untagged `Known | Unknown(String)` upstream, so the
 // raw value is preserved and a plan this table does not know is forwarded as it

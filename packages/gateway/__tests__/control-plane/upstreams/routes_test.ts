@@ -1044,6 +1044,122 @@ test('POST /api/upstreams/codex/oauth/refresh flips the row to refresh_failed wh
   assertEquals(typeof storedState.accounts[0].state_message, 'string');
 });
 
+test('POST /api/upstreams/codex/reset-credits lists earned reset cards for the stored account', async () => {
+  const { repo, adminSession } = await setupAppTest();
+  await repo.upstreams.deleteAll();
+  const created = await createCodexUpstreamViaExchange(adminSession);
+
+  await withMockedFetch(
+    request => {
+      assertEquals(new URL(request.url).pathname, '/backend-api/wham/rate-limit-reset-credits');
+      assertEquals(request.headers.get('authorization'), 'Bearer at_test');
+      assertEquals(request.headers.get('chatgpt-account-id'), 'acc_test');
+      return jsonResponse({
+        available_count: 1,
+        credits: [{
+          id: 'credit-1', reset_type: 'codex_rate_limits', status: 'available',
+          granted_at: '2026-06-17T00:00:00Z', expires_at: null,
+          title: 'Full reset', description: 'Ready to redeem',
+        }],
+      });
+    },
+    async () => {
+      const resp = await requestApp('/api/upstreams/codex/reset-credits', authed(adminSession, {
+        record: envelopeFromRecord(await getRecord(repo, created.id)),
+      }));
+      assertEquals(resp.status, 200);
+      const body = await resp.json() as { reset_credits: { available_count: number; credits: Array<{ id: string }> } };
+      assertEquals(body.reset_credits.available_count, 1);
+      assertEquals(body.reset_credits.credits[0].id, 'credit-1');
+    },
+  );
+});
+
+test('POST /api/upstreams/codex/reset-credits refreshes once after a definite upstream 401', async () => {
+  const { repo, adminSession } = await setupAppTest();
+  await repo.upstreams.deleteAll();
+  const created = await createCodexUpstreamViaExchange(adminSession);
+  let listAttempts = 0;
+
+  await withMockedFetch(
+    request => {
+      const path = new URL(request.url).pathname;
+      if (path === '/backend-api/wham/rate-limit-reset-credits') {
+        listAttempts += 1;
+        if (listAttempts === 1) return new Response('expired', { status: 401 });
+        assertEquals(request.headers.get('authorization'), 'Bearer at_rotated');
+        return jsonResponse({ available_count: 0, credits: [] });
+      }
+      if (path === '/oauth/token') {
+        return jsonResponse({
+          access_token: 'at_rotated', refresh_token: 'rt_rotated',
+          id_token: fakeIdToken({}), expires_in: 3600,
+        });
+      }
+      throw new Error(`unexpected Codex request to ${path}`);
+    },
+    async () => {
+      const resp = await requestApp('/api/upstreams/codex/reset-credits', authed(adminSession, {
+        record: envelopeFromRecord(await getRecord(repo, created.id)),
+      }));
+      assertEquals(resp.status, 200);
+      assertEquals(listAttempts, 2);
+    },
+  );
+  const updated = await getRecord(repo, created.id);
+  const updatedState = updated.state as { accounts: Array<{ refresh_token: string }> };
+  assertEquals(updatedState.accounts[0].refresh_token, 'rt_rotated');
+});
+
+test('POST /api/upstreams/codex/reset-credits/consume sends the stable key and invalidates stale quota', async () => {
+  const { repo, adminSession } = await setupAppTest();
+  await repo.upstreams.deleteAll();
+  const created = await createCodexUpstreamViaExchange(adminSession);
+  const stored = await getRecord(repo, created.id);
+  const state = stored.state as { accounts: Array<Record<string, unknown>> };
+  await repo.upstreams.save({
+    ...stored,
+    state: {
+      accounts: state.accounts.map(account => ({
+        ...account,
+        quotaSnapshot: {
+          codex: { fetchedAt: Date.now(), data: { observed_at: '2026-06-17T00:00:00Z', primary_used_percent: 100 } },
+        },
+      })),
+    },
+  });
+
+  const paths: string[] = [];
+  await withMockedFetch(
+    async request => {
+      const path = new URL(request.url).pathname;
+      paths.push(path);
+      if (path.endsWith('/consume')) {
+        assertEquals(await request.json(), { redeem_request_id: 'redeem-stable', credit_id: 'credit-1' });
+        return jsonResponse({ code: 'reset', windows_reset: 2 });
+      }
+      return jsonResponse({ available_count: 0, credits: [] });
+    },
+    async () => {
+      const resp = await requestApp('/api/upstreams/codex/reset-credits/consume', authed(adminSession, {
+        record: envelopeFromRecord(await getRecord(repo, created.id)),
+        credit_id: 'credit-1',
+        idempotency_key: 'redeem-stable',
+      }));
+      assertEquals(resp.status, 200);
+      const body = await resp.json() as { outcome: { code: string }; reset_credits: { available_count: number }; refresh_error: string | null };
+      assertEquals(body, { outcome: { code: 'reset' }, reset_credits: { available_count: 0, credits: [] }, refresh_error: null });
+    },
+  );
+  assertEquals(paths, [
+    '/backend-api/wham/rate-limit-reset-credits/consume',
+    '/backend-api/wham/rate-limit-reset-credits',
+  ]);
+  const updated = await getRecord(repo, created.id);
+  const updatedState = updated.state as { accounts: Array<{ quotaSnapshot: unknown }> };
+  assertEquals(updatedState.accounts[0].quotaSnapshot, null);
+});
+
 // --- Claude Code routes ---
 //
 // Test setup mirrors the codex routes: we drive the OAuth + profile fetches
